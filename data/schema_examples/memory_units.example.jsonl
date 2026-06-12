@@ -1,0 +1,2 @@
+{"unit_id":"dataset:session:mem0001","task_id":"dataset:session","unit_index":1,"text":"A normalized memory unit rendered into visual pages.","metadata":{"source":"example"}}
+{"unit_id":"dataset:session:mem0002","task_id":"dataset:session","unit_index":2,"text":"Another memory unit from the same task-local memory pool.","metadata":{"source":"example"}}

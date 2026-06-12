@@ -1,0 +1,143 @@
+{
+  "targets": 2,
+  "rows": 2000,
+  "ok_rows": 2000,
+  "score_mean": 0.85925,
+  "correct_rate": 0.85,
+  "target_summaries": [
+    {
+      "target": "eventqa_baseline_quality",
+      "summary_path": "results/quality_summaries/eventqa_32b_baseline_semantic_summary.json",
+      "rows": 1000,
+      "ok_rows": 1000,
+      "error_rows": 0,
+      "score_mean": 0.8735,
+      "correct_rate": 0.865,
+      "partial_or_correct_rate": 0.882,
+      "labels": {
+        "correct": 865,
+        "incorrect": 118,
+        "partial": 17
+      },
+      "tasks": {
+        "eventqa:scenario:0001": {
+          "rows": 100,
+          "score_mean": 0.795,
+          "correct_rate": 0.77
+        },
+        "eventqa:scenario:0002": {
+          "rows": 100,
+          "score_mean": 0.85,
+          "correct_rate": 0.85
+        },
+        "eventqa:scenario:0003": {
+          "rows": 100,
+          "score_mean": 0.795,
+          "correct_rate": 0.78
+        },
+        "eventqa:scenario:0004": {
+          "rows": 100,
+          "score_mean": 0.785,
+          "correct_rate": 0.78
+        },
+        "eventqa:scenario:0005": {
+          "rows": 100,
+          "score_mean": 0.73,
+          "correct_rate": 0.73
+        },
+        "eventqa:scenario:0006": {
+          "rows": 100,
+          "score_mean": 0.96,
+          "correct_rate": 0.95
+        },
+        "eventqa:scenario:0007": {
+          "rows": 100,
+          "score_mean": 0.985,
+          "correct_rate": 0.98
+        },
+        "eventqa:scenario:0008": {
+          "rows": 100,
+          "score_mean": 0.985,
+          "correct_rate": 0.98
+        },
+        "eventqa:scenario:0009": {
+          "rows": 100,
+          "score_mean": 0.94,
+          "correct_rate": 0.93
+        },
+        "eventqa:scenario:0010": {
+          "rows": 100,
+          "score_mean": 0.91,
+          "correct_rate": 0.9
+        }
+      }
+    },
+    {
+      "target": "eventqa_vispage_quality",
+      "summary_path": "results/quality_summaries/eventqa_32b_baseline_semantic_summary.json",
+      "rows": 1000,
+      "ok_rows": 1000,
+      "error_rows": 0,
+      "score_mean": 0.845,
+      "correct_rate": 0.835,
+      "partial_or_correct_rate": 0.855,
+      "labels": {
+        "correct": 835,
+        "incorrect": 145,
+        "partial": 20
+      },
+      "tasks": {
+        "eventqa:scenario:0001": {
+          "rows": 100,
+          "score_mean": 0.81,
+          "correct_rate": 0.78
+        },
+        "eventqa:scenario:0002": {
+          "rows": 100,
+          "score_mean": 0.83,
+          "correct_rate": 0.83
+        },
+        "eventqa:scenario:0003": {
+          "rows": 100,
+          "score_mean": 0.795,
+          "correct_rate": 0.78
+        },
+        "eventqa:scenario:0004": {
+          "rows": 100,
+          "score_mean": 0.765,
+          "correct_rate": 0.75
+        },
+        "eventqa:scenario:0005": {
+          "rows": 100,
+          "score_mean": 0.72,
+          "correct_rate": 0.72
+        },
+        "eventqa:scenario:0006": {
+          "rows": 100,
+          "score_mean": 0.865,
+          "correct_rate": 0.86
+        },
+        "eventqa:scenario:0007": {
+          "rows": 100,
+          "score_mean": 0.98,
+          "correct_rate": 0.98
+        },
+        "eventqa:scenario:0008": {
+          "rows": 100,
+          "score_mean": 0.93,
+          "correct_rate": 0.91
+        },
+        "eventqa:scenario:0009": {
+          "rows": 100,
+          "score_mean": 0.875,
+          "correct_rate": 0.87
+        },
+        "eventqa:scenario:0010": {
+          "rows": 100,
+          "score_mean": 0.88,
+          "correct_rate": 0.87
+        }
+      }
+    }
+  ]
+}

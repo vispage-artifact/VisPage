@@ -1,0 +1,5 @@
+axis,value,queries,server_ttft_ms,speedup,warm_page_queries,fallback_queries,full_hit_queries,partial_hit_queries,submitted_pages,used_pages,wasted_page_rate,source
+amp,2.0,199,2251.131768202662,1.140671138002063,153,46,11,142,54,39,0.2777777777777778,paper_results/evaluation/sensitivity_8b_locomo_quick/amp_8020/autoeval/20260611_184202/config_000_amp2_8020
+amp,3.0,199,1887.4889737996623,1.3604323370743423,178,21,16,162,95,65,0.3157894736842105,paper_results/evaluation/sensitivity_8b_locomo_quick/amp_8020/autoeval/20260611_184202/config_001_amp3_8020
+amp,5.0,199,1682.9592055411795,1.52576546559999,189,10,39,150,157,94,0.4012738853503185,paper_results/evaluation/exp1_8b_server_ttft_quick/locomo_8000/autoeval/20260611_085418/config_001_locomo_semantic_8000
+amp,7.0,199,1860.5734247658122,1.380112712376042,168,31,31,137,154,74,0.5194805194805194,paper_results/evaluation/sensitivity_8b_locomo_quick/amp_8020/autoeval/20260611_184202/config_002_amp7_8020

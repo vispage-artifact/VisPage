@@ -1,0 +1,63 @@
+{
+  "run_name": "exp1_8b_server_ttft_quick",
+  "dataset": {
+    "name": "perma",
+    "memory_path": "dataset/perma/processed/memory_units.jsonl",
+    "query_path": "dataset/perma/processed/query_records.jsonl",
+    "temporal_memory_mask": true
+  },
+  "retrieval": {
+    "mode": "embedding_retrieve",
+    "topk": 10,
+    "embedding_cache_path": "dataset/perma/processed/embeddings/qwen3-embed-4b.json"
+  },
+  "locality": {
+    "mode": "embedding_ball",
+    "radius_percentile": 100.0,
+    "max_units": 1000
+  },
+  "page": {
+    "key_prefix": "exp1-8b-server-ttft-perma-semantic-s1",
+    "max_units": 1000,
+    "max_amplification": 5,
+    "max_visual_tokens": 60000
+  },
+  "renderer": {
+    "output_dir": "paper_results/rendered_pages/exp1_8b_server_ttft_quick/perma_scale1_semantic",
+    "unit_width": 1024,
+    "width_scale": 1.0,
+    "font_size": 24,
+    "line_height": 34,
+    "padding": 24,
+    "chars_per_line": 72,
+    "tile_gap": 0
+  },
+  "foreground": {
+    "min_coverage": 0.3
+  },
+  "prewarm": {
+    "min_candidate_coverage": 0.5,
+    "max_new_in_old": 0.5,
+    "max_inflight_pages": 1
+  },
+  "runtime": {
+    "mode": "vllm",
+    "base_url": "http://127.0.0.1:8002",
+    "model": "qwen3vl-8b",
+    "api_key": null,
+    "foreground_max_tokens": 64,
+    "background_max_tokens": 1,
+    "background_chunk_tokens": 512
+  },
+  "metadata": {
+    "paper_mode": "semantic",
+    "dataset": "perma",
+    "width_scale": 1.0,
+    "embedding_model_key": "qwen3-embed-4b",
+    "semantic_policy": "nearest_under_amp",
+    "temporal_memory_mask": true,
+    "server_ttft_rerun": true,
+    "gpu": 2,
+    "port": 8002
+  }
+}

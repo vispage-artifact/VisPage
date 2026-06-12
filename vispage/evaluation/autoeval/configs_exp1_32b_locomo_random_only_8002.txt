@@ -1,0 +1,1 @@
+configs/exp1_32b_single/exp1_32b_locomo_scale1_random_qwen3_embed_4b.json

@@ -1,0 +1,70 @@
+{
+  "dataset": {
+    "memory_path": "dataset/locomo/processed/memory_units.jsonl",
+    "name": "locomo",
+    "query_path": "dataset/locomo/processed/query_records.jsonl",
+    "temporal_memory_mask": false
+  },
+  "foreground": {
+    "min_coverage": 0.3
+  },
+  "locality": {
+    "max_units": 1000,
+    "mode": "embedding_ball",
+    "radius_percentile": 100.0,
+    "random_seed": 0
+  },
+  "metadata": {
+    "dataset": "locomo",
+    "embedding_model_key": "qwen3-embed-4b",
+    "foreground_update_amp_multiplier": 1.2,
+    "foreground_update_max_amplification": 3.6,
+    "paper_mode": "semantic",
+    "semantic_policy": "nearest_under_amp",
+    "sensitivity": "locomo_amp",
+    "sensitivity_axis": "max_amplification",
+    "sensitivity_value": 3,
+    "server_port": 8020,
+    "width_scale": 4.0
+  },
+  "page": {
+    "key_prefix": "sens8b-locomo-s4-semantic-amp3:sensitivity_8b_locomo_amp__20260611_184202__cfg001",
+    "max_amplification": 3,
+    "max_cache_visual_tokens": null,
+    "max_foreground_update_amplification": 3.6,
+    "max_units": 1000,
+    "max_visual_tokens": 60000
+  },
+  "prewarm": {
+    "max_inflight_pages": 1,
+    "max_new_in_old": 0.5,
+    "min_candidate_coverage": 0.5
+  },
+  "renderer": {
+    "chars_per_line": 72,
+    "font_size": 24,
+    "line_height": 34,
+    "output_dir": "paper_results/rendered_pages/sensitivity_8b_locomo_quick/amp3",
+    "padding": 24,
+    "post_render_scale": 1.0,
+    "run_tag": "sensitivity_8b_locomo_amp__20260611_184202__cfg001",
+    "tile_gap": 0,
+    "unit_width": 1024,
+    "width_scale": 4.0
+  },
+  "retrieval": {
+    "embedding_cache_path": "dataset/locomo/processed/embeddings/qwen3-embed-4b.json",
+    "mode": "embedding_retrieve",
+    "topk": 10
+  },
+  "run_name": "sensitivity_8b_locomo_amp",
+  "runtime": {
+    "api_key": null,
+    "background_chunk_tokens": 512,
+    "background_max_tokens": 1,
+    "base_url": "http://127.0.0.1:8020",
+    "foreground_max_tokens": 64,
+    "mode": "vllm",
+    "model": "qwen3vl-8b"
+  }
+}

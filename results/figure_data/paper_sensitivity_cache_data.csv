@@ -1,0 +1,6 @@
+axis,value,queries,server_ttft_ms,speedup,warm_page_queries,fallback_queries,full_hit_queries,partial_hit_queries,submitted_pages,used_pages,wasted_page_rate,source
+cache_util,0.5,199,2272.3346199821585,1.1300276874928255,160,39,19,141,161,77,0.5217391304347826,paper_results/evaluation/sensitivity_8b_locomo_quick/cache_util/util_0p50/autoeval/20260611_183829/config_000_cache_util_0p50_port8021
+cache_util,0.6,199,1959.3270615716676,1.3105525290752498,173,26,32,141,155,80,0.4838709677419355,paper_results/evaluation/sensitivity_8b_locomo_quick/cache_util/util_0p60/autoeval/20260611_185601/config_000_cache_util_0p60_port8021
+cache_util,0.7,199,1880.6609795920215,1.3653715707896321,179,20,32,147,161,89,0.44720496894409933,paper_results/evaluation/sensitivity_8b_locomo_quick/cache_util/util_0p70/autoeval/20260611_191309/config_000_cache_util_0p70_port8021
+cache_util,0.8,199,1823.9723282243738,1.4078070133487528,184,15,33,151,160,95,0.40625,paper_results/evaluation/sensitivity_8b_locomo_quick/cache_util/util_0p80/autoeval/20260611_192845/config_000_cache_util_0p80_port8021
+cache_util,0.9,199,1682.9592055411795,1.52576546559999,189,10,39,150,157,94,0.4012738853503185,paper_results/evaluation/exp1_8b_server_ttft_quick/locomo_8000/autoeval/20260611_085418/config_001_locomo_semantic_8000

@@ -1,0 +1,39 @@
+{
+  "args": {
+    "atomicity": "task",
+    "config_list": "configs/exp1_8b_server_ttft_quick/locomo_random_8013.list",
+    "configs": [],
+    "continue_on_failure": false,
+    "fail_on_background_errors": false,
+    "force": false,
+    "max_cache_visual_tokens": null,
+    "max_visual_tokens": null,
+    "output_root": "paper_results/evaluation/exp1_8b_server_ttft_quick/",
+    "plan_only": false,
+    "progress_every": 20,
+    "query_limit": null,
+    "resume_batch_dir": null,
+    "retry_sleep": 10.0,
+    "schedule": "config",
+    "session_limit": null,
+    "session_retries": 2,
+    "skip_runtime_preflight": false,
+    "stop_on_failure": false
+  },
+  "batch_dir": "paper_results/evaluation/exp1_8b_server_ttft_quick/autoeval/20260611_141456",
+  "config_paths": [
+    "configs/exp1_8b_server_ttft_quick/locomo_random_8013.json"
+  ],
+  "created_or_resumed_at": "2026-06-11T14:14:56",
+  "fail_on_background_errors": false,
+  "git_commit": "9b3460098d688d53d726ea77c621d6930b36a800",
+  "max_cache_visual_tokens": null,
+  "max_visual_tokens": null,
+  "query_limit": null,
+  "retry_sleep": 10.0,
+  "schedule": "config",
+  "session_limit": null,
+  "session_retries": 2,
+  "skip_runtime_preflight": false,
+  "stop_on_failure": false
+}

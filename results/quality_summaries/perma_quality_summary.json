@@ -1,0 +1,54 @@
+{
+  "description": "PERMA quality sanity check using the original candidate-answer prompt format on one sampled session.",
+  "targets": 2,
+  "rows": 228,
+  "ok_rows": 228,
+  "score_mean": 0.8026315789473685,
+  "correct_rate": 0.6710526315789473,
+  "target_summaries": [
+    {
+      "target": "perma_original_options_baseline_user108",
+      "trace_path": "results/traces/perma_original_options_quality/baseline_8000_20260612_063904/config_000_perma_user108_options_baseline_8000",
+      "rows": 114,
+      "ok_rows": 114,
+      "error_rows": 0,
+      "score_mean": 0.7894736842105263,
+      "correct_rate": 0.6403508771929824,
+      "partial_or_correct_rate": 0.9385964912280702,
+      "labels": {
+        "correct": 73,
+        "partial": 34,
+        "incorrect": 7
+      },
+      "tasks": {
+        "perma:user108": {
+          "rows": 114,
+          "score_mean": 0.7894736842105263,
+          "correct_rate": 0.6403508771929824
+        }
+      }
+    },
+    {
+      "target": "perma_original_options_vispage_user108",
+      "trace_path": "results/traces/perma_original_options_quality/semantic_8001_20260612_063941/config_000_perma_user108_options_semantic_8001",
+      "rows": 114,
+      "ok_rows": 114,
+      "error_rows": 0,
+      "score_mean": 0.8157894736842105,
+      "correct_rate": 0.7017543859649122,
+      "partial_or_correct_rate": 0.9298245614035088,
+      "labels": {
+        "correct": 80,
+        "partial": 26,
+        "incorrect": 8
+      },
+      "tasks": {
+        "perma:user108": {
+          "rows": 114,
+          "score_mean": 0.8157894736842105,
+          "correct_rate": 0.7017543859649122
+        }
+      }
+    }
+  ]
+}

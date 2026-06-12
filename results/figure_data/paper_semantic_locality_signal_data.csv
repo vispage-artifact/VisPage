@@ -1,0 +1,25 @@
+topk,candidate_method,horizon,candidate_unit_hit_rate
+5,Top semantic,1,0.0217
+5,Top semantic,20,0.1807
+5,Top semantic,40,0.2688
+5,Top semantic,80,0.3691
+5,Random,1,0.0065
+5,Random,20,0.098
+5,Random,40,0.1612
+5,Random,80,0.2389
+5,Bottom semantic,1,0.0035
+5,Bottom semantic,20,0.078
+5,Bottom semantic,40,0.138
+5,Bottom semantic,80,0.2212
+10,Top semantic,1,0.0359
+10,Top semantic,20,0.2772
+10,Top semantic,40,0.3846
+10,Top semantic,80,0.4835
+10,Random,1,0.0127
+10,Random,20,0.164
+10,Random,40,0.2666
+10,Random,80,0.3555
+10,Bottom semantic,1,0.0058
+10,Bottom semantic,20,0.1104
+10,Bottom semantic,40,0.1889
+10,Bottom semantic,80,0.2865

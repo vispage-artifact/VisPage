@@ -1,0 +1,41 @@
+{
+  "args": {
+    "atomicity": "task",
+    "config_list": "configs/sensitivity_8b_locomo_quick/amp_8020.list",
+    "configs": [],
+    "continue_on_failure": false,
+    "fail_on_background_errors": false,
+    "force": false,
+    "max_cache_visual_tokens": null,
+    "max_visual_tokens": null,
+    "output_root": "paper_results/evaluation/sensitivity_8b_locomo_quick/amp_8020",
+    "plan_only": false,
+    "progress_every": 1,
+    "query_limit": null,
+    "resume_batch_dir": null,
+    "retry_sleep": 10.0,
+    "schedule": "config",
+    "session_limit": 1,
+    "session_retries": 1,
+    "skip_runtime_preflight": false,
+    "stop_on_failure": false
+  },
+  "batch_dir": "paper_results/evaluation/sensitivity_8b_locomo_quick/amp_8020/autoeval/20260611_184202",
+  "config_paths": [
+    "configs/sensitivity_8b_locomo_quick/amp2_8020.json",
+    "configs/sensitivity_8b_locomo_quick/amp3_8020.json",
+    "configs/sensitivity_8b_locomo_quick/amp7_8020.json"
+  ],
+  "created_or_resumed_at": "2026-06-11T18:42:02",
+  "fail_on_background_errors": false,
+  "git_commit": "9b3460098d688d53d726ea77c621d6930b36a800",
+  "max_cache_visual_tokens": null,
+  "max_visual_tokens": null,
+  "query_limit": null,
+  "retry_sleep": 10.0,
+  "schedule": "config",
+  "session_limit": 1,
+  "session_retries": 1,
+  "skip_runtime_preflight": false,
+  "stop_on_failure": false
+}

@@ -1,0 +1,2 @@
+{"query_id":"dataset:session:q0001","task_id":"dataset:session","query_index":1,"query_text":"A workflow query that retrieves memory evidence.","access_units":["dataset:session:mem0001"],"access_type":"gold","metadata":{"answer":"example answer"}}
+{"query_id":"dataset:session:q0002","task_id":"dataset:session","query_index":2,"query_text":"A later workflow query from the same task-local trace.","access_units":["dataset:session:mem0002"],"access_type":"gold","metadata":{"answer":"example answer"}}

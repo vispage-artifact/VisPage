@@ -1,0 +1,143 @@
+{
+  "targets": 2,
+  "rows": 3972,
+  "ok_rows": 3971,
+  "score_mean": 0.5221606648199446,
+  "correct_rate": 0.46411483253588515,
+  "target_summaries": [
+    {
+      "target": "locomo_baseline_quality",
+      "summary_path": "results/quality_summaries/locomo_8b_scale4_baseline_semantic_summary.json",
+      "rows": 1986,
+      "ok_rows": 1986,
+      "error_rows": 0,
+      "score_mean": 0.5327291037260826,
+      "correct_rate": 0.473313192346425,
+      "partial_or_correct_rate": 0.5921450151057401,
+      "labels": {
+        "correct": 940,
+        "incorrect": 810,
+        "partial": 236
+      },
+      "tasks": {
+        "locomo:conv-26": {
+          "rows": 199,
+          "score_mean": 0.5628140703517588,
+          "correct_rate": 0.47738693467336685
+        },
+        "locomo:conv-30": {
+          "rows": 105,
+          "score_mean": 0.5619047619047619,
+          "correct_rate": 0.5142857142857142
+        },
+        "locomo:conv-41": {
+          "rows": 193,
+          "score_mean": 0.5880829015544041,
+          "correct_rate": 0.533678756476684
+        },
+        "locomo:conv-42": {
+          "rows": 260,
+          "score_mean": 0.4826923076923077,
+          "correct_rate": 0.4307692307692308
+        },
+        "locomo:conv-43": {
+          "rows": 242,
+          "score_mean": 0.5392561983471075,
+          "correct_rate": 0.49173553719008267
+        },
+        "locomo:conv-44": {
+          "rows": 158,
+          "score_mean": 0.5221518987341772,
+          "correct_rate": 0.46835443037974683
+        },
+        "locomo:conv-47": {
+          "rows": 190,
+          "score_mean": 0.5421052631578948,
+          "correct_rate": 0.49473684210526314
+        },
+        "locomo:conv-48": {
+          "rows": 239,
+          "score_mean": 0.5292887029288703,
+          "correct_rate": 0.46443514644351463
+        },
+        "locomo:conv-49": {
+          "rows": 196,
+          "score_mean": 0.5051020408163265,
+          "correct_rate": 0.42857142857142855
+        },
+        "locomo:conv-50": {
+          "rows": 204,
+          "score_mean": 0.5220588235294118,
+          "correct_rate": 0.46078431372549017
+        }
+      }
+    },
+    {
+      "target": "locomo_vispage_quality",
+      "summary_path": "results/quality_summaries/locomo_8b_scale4_baseline_semantic_summary.json",
+      "rows": 1986,
+      "ok_rows": 1985,
+      "error_rows": 1,
+      "score_mean": 0.5115869017632242,
+      "correct_rate": 0.454911838790932,
+      "partial_or_correct_rate": 0.5682619647355164,
+      "labels": {
+        "correct": 903,
+        "incorrect": 857,
+        "partial": 225
+      },
+      "tasks": {
+        "locomo:conv-26": {
+          "rows": 199,
+          "score_mean": 0.5301507537688442,
+          "correct_rate": 0.45226130653266333
+        },
+        "locomo:conv-30": {
+          "rows": 105,
+          "score_mean": 0.5523809523809524,
+          "correct_rate": 0.5142857142857142
+        },
+        "locomo:conv-41": {
+          "rows": 193,
+          "score_mean": 0.5777202072538861,
+          "correct_rate": 0.5181347150259067
+        },
+        "locomo:conv-42": {
+          "rows": 260,
+          "score_mean": 0.47115384615384615,
+          "correct_rate": 0.41923076923076924
+        },
+        "locomo:conv-43": {
+          "rows": 242,
+          "score_mean": 0.506198347107438,
+          "correct_rate": 0.45867768595041325
+        },
+        "locomo:conv-44": {
+          "rows": 158,
+          "score_mean": 0.5569620253164557,
+          "correct_rate": 0.5063291139240507
+        },
+        "locomo:conv-47": {
+          "rows": 190,
+          "score_mean": 0.5078947368421053,
+          "correct_rate": 0.4473684210526316
+        },
+        "locomo:conv-48": {
+          "rows": 239,
+          "score_mean": 0.497907949790795,
+          "correct_rate": 0.4476987447698745
+        },
+        "locomo:conv-49": {
+          "rows": 195,
+          "score_mean": 0.5102564102564102,
+          "correct_rate": 0.4256410256410256
+        },
+        "locomo:conv-50": {
+          "rows": 204,
+          "score_mean": 0.4534313725490196,
+          "correct_rate": 0.4117647058823529
+        }
+      }
+    }
+  ]
+}

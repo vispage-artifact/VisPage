@@ -1,0 +1,16 @@
+{
+  "memory_path": "dataset/perma/processed/memory_units.jsonl",
+  "query_path": "dataset/perma/processed/query_records.jsonl",
+  "output_dir": "dataset/perma/processed/embeddings",
+  "base_url": "http://127.0.0.1:8011/v1",
+  "model": "qwen3-embed-4b",
+  "model_key": "qwen3-embed-4b",
+  "api_key": null,
+  "batch_size": 64,
+  "concurrency": 8,
+  "timeout_seconds": 120,
+  "checkpoint_every_batches": 20,
+  "max_chars": null,
+  "memory_limit": null,
+  "query_limit": null
+}

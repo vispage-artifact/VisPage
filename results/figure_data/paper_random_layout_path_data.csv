@@ -1,0 +1,7 @@
+method,path,path_label,queries,path_queries,path_ratio
+Random,fallback,Fallback,1986,781,0.3932527693856999
+Random,partial_hit,Partial,1986,1199,0.6037260825780463
+Random,full_hit,Full,1986,6,0.0030211480362537764
+VISPAGE,fallback,Fallback,1986,200,0.10070493454179255
+VISPAGE,partial_hit,Partial,1986,1499,0.7547834843907352
+VISPAGE,full_hit,Full,1986,287,0.1445115810674723

@@ -1,0 +1,67 @@
+{
+  "artifacts": {
+    "manifest": "manifest.json",
+    "pages": "pages.jsonl",
+    "run_config": "run_config.json",
+    "summary": "summary.json",
+    "trace": "trace.jsonl"
+  },
+  "config_path": "/tmp/vispage_sensitivity_cache_util_quick/cache_util_0p60_port8021.json",
+  "dataset": {
+    "memory_path": "dataset/locomo/processed/memory_units.jsonl",
+    "name": "locomo",
+    "query_path": "dataset/locomo/processed/query_records.jsonl",
+    "temporal_memory_mask": false
+  },
+  "foreground": {
+    "min_coverage": 0.3
+  },
+  "git_commit": "9b3460098d688d53d726ea77c621d6930b36a800",
+  "locality": {
+    "max_units": 1000,
+    "mode": "embedding_ball",
+    "radius_percentile": 100.0,
+    "random_seed": 0
+  },
+  "output_dir": "paper_results/evaluation/sensitivity_8b_locomo_quick/cache_util/util_0p60/autoeval/20260611_185601/config_000_cache_util_0p60_port8021",
+  "output_root": "paper_results/evaluation/sensitivity_8b_locomo_quick/cache_util/util_0p60/autoeval/20260611_185601",
+  "page": {
+    "key_prefix": "sens8b-cache0p60-locomo-s4-semantic:sensitivity_8b_locomo_cache_util0p60__20260611_185601__cfg000",
+    "max_amplification": 5,
+    "max_cache_visual_tokens": null,
+    "max_foreground_update_amplification": null,
+    "max_units": 1000,
+    "max_visual_tokens": 60000
+  },
+  "prewarm": {
+    "max_inflight_pages": 1,
+    "max_new_in_old": 0.5,
+    "min_candidate_coverage": 0.5
+  },
+  "query_limit": null,
+  "retrieval": {
+    "embedding_cache_path": "dataset/locomo/processed/embeddings/qwen3-embed-4b.json",
+    "mode": "embedding_retrieve",
+    "topk": 10
+  },
+  "run_id": "sensitivity_8b_locomo_cache_util0p60__locomo__embed_qwen3-embed-4b_topk10__nearest_amp_max1000__page1000_amp5_fgcov0.3_precov0.5_overlap0.5_inflight1_wscale4_pscale1_vtok60000_cvtoknone__qwen3vl-8b_fg64_bgchunk512__20260611_185601",
+  "runtime": {
+    "api_key": null,
+    "background_chunk_tokens": 512,
+    "background_max_tokens": 1,
+    "base_url": "http://127.0.0.1:8021",
+    "foreground_max_tokens": 64,
+    "mode": "vllm",
+    "model": "qwen3vl-8b"
+  },
+  "segments": {
+    "dataset": "locomo",
+    "locality": "nearest_amp_max1000",
+    "page_policy": "page1000_amp5_fgcov0.3_precov0.5_overlap0.5_inflight1_wscale4_pscale1_vtok60000_cvtoknone",
+    "retrieval": "embed_qwen3-embed-4b_topk10",
+    "run_name": "sensitivity_8b_locomo_cache_util0p60",
+    "runtime": "qwen3vl-8b_fg64_bgchunk512",
+    "timestamp": "20260611_185601"
+  },
+  "timestamp": "20260611_185601"
+}

@@ -1,0 +1,78 @@
+{
+  "attempt": 1,
+  "config": {
+    "dataset": {
+      "memory_path": "paper_results/evaluation/exp1_32b_server_ttft_quick/eventqa_8011/autoeval/20260611_140048/config_000_eventqa_baseline_8011/sessions/eventqa-scenario-0001/input/memory_units.jsonl",
+      "name": "eventqa",
+      "query_path": "paper_results/evaluation/exp1_32b_server_ttft_quick/eventqa_8011/autoeval/20260611_140048/config_000_eventqa_baseline_8011/sessions/eventqa-scenario-0001/input/query_records.jsonl",
+      "temporal_memory_mask": false
+    },
+    "foreground": {
+      "min_coverage": 0.3
+    },
+    "locality": {
+      "max_units": null,
+      "mode": "baseline",
+      "radius_percentile": null,
+      "random_seed": 0
+    },
+    "metadata": {
+      "canonical_exp1_32b_server_ttft_quick": true,
+      "dataset": "eventqa",
+      "embedding_model_key": "qwen3-embed-4b",
+      "paper_mode": "baseline",
+      "post_render_scale": 0.7,
+      "runtime_gpu": 1,
+      "runtime_port": 8011,
+      "server_ttft_metric": true,
+      "temporal_memory_mask": false,
+      "visual_budget_policy": "budget_aware_candidate_trim",
+      "width_scale": 1.0
+    },
+    "page": {
+      "key_prefix": "exp1-32b-quick-eventqa-baseline-s1:exp1_32b_server_ttft_quick__20260611_140048__cfg000__eventqa-scenario-0001__a001",
+      "max_amplification": 5,
+      "max_cache_visual_tokens": 12000,
+      "max_foreground_update_amplification": null,
+      "max_units": 1000,
+      "max_visual_tokens": 18000
+    },
+    "prewarm": {
+      "max_inflight_pages": 1,
+      "max_new_in_old": 0.5,
+      "min_candidate_coverage": 0.5
+    },
+    "renderer": {
+      "chars_per_line": 72,
+      "font_size": 24,
+      "line_height": 34,
+      "output_dir": "paper_results/rendered_pages/exp1_32b_server_ttft_quick/eventqa_scale1_baseline",
+      "padding": 24,
+      "post_render_scale": 0.7,
+      "run_tag": "exp1_32b_server_ttft_quick__20260611_140048__cfg000__eventqa-scenario-0001__a001",
+      "tile_gap": 0,
+      "unit_width": 1024,
+      "width_scale": 1.0
+    },
+    "retrieval": {
+      "embedding_cache_path": "dataset/eventqa/processed/embeddings/qwen3-embed-4b.json",
+      "mode": "embedding_retrieve",
+      "topk": 10
+    },
+    "run_name": "exp1_32b_server_ttft_quick",
+    "runtime": {
+      "api_key": null,
+      "background_chunk_tokens": 512,
+      "background_max_tokens": 1,
+      "base_url": "http://127.0.0.1:8011",
+      "foreground_max_tokens": 64,
+      "mode": "vllm",
+      "model": "qwen3vl-32b"
+    }
+  },
+  "config_dir": "paper_results/evaluation/exp1_32b_server_ttft_quick/eventqa_8011/autoeval/20260611_140048/config_000_eventqa_baseline_8011",
+  "memory_count": 1399,
+  "query_count": 100,
+  "session_dir": "paper_results/evaluation/exp1_32b_server_ttft_quick/eventqa_8011/autoeval/20260611_140048/config_000_eventqa_baseline_8011/sessions/eventqa-scenario-0001",
+  "task_id": "eventqa:scenario:0001"
+}

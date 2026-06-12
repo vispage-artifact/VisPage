@@ -1,0 +1,64 @@
+{
+  "run_name": "exp1_32b_server_ttft_quick",
+  "dataset": {
+    "name": "locomo",
+    "memory_path": "dataset/locomo/processed/memory_units.jsonl",
+    "query_path": "dataset/locomo/processed/query_records.jsonl"
+  },
+  "retrieval": {
+    "mode": "embedding_retrieve",
+    "topk": 10,
+    "embedding_cache_path": "dataset/locomo/processed/embeddings/qwen3-embed-4b.json"
+  },
+  "locality": {
+    "mode": "baseline"
+  },
+  "page": {
+    "key_prefix": "exp1-32b-quick-locomo-baseline-s1",
+    "max_units": 1000,
+    "max_amplification": 5,
+    "max_visual_tokens": 18000,
+    "max_cache_visual_tokens": 12000
+  },
+  "renderer": {
+    "output_dir": "paper_results/rendered_pages/exp1_32b_server_ttft_quick/locomo_scale1_baseline",
+    "unit_width": 1024,
+    "width_scale": 1.0,
+    "post_render_scale": 0.7,
+    "font_size": 24,
+    "line_height": 34,
+    "padding": 24,
+    "chars_per_line": 72,
+    "tile_gap": 0
+  },
+  "foreground": {
+    "min_coverage": 0.3
+  },
+  "prewarm": {
+    "min_candidate_coverage": 0.5,
+    "max_new_in_old": 0.5,
+    "max_inflight_pages": 1
+  },
+  "runtime": {
+    "mode": "vllm",
+    "base_url": "http://127.0.0.1:8010",
+    "model": "qwen3vl-32b",
+    "api_key": null,
+    "foreground_max_tokens": 64,
+    "background_max_tokens": 1,
+    "background_chunk_tokens": 512
+  },
+  "metadata": {
+    "paper_mode": "baseline",
+    "dataset": "locomo",
+    "width_scale": 1.0,
+    "post_render_scale": 0.7,
+    "embedding_model_key": "qwen3-embed-4b",
+    "canonical_exp1_32b_server_ttft_quick": true,
+    "temporal_memory_mask": false,
+    "visual_budget_policy": "budget_aware_candidate_trim",
+    "server_ttft_metric": true,
+    "runtime_port": 8010,
+    "runtime_gpu": 0
+  }
+}

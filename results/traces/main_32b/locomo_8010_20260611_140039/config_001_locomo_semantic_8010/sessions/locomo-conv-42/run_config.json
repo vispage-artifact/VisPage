@@ -1,0 +1,71 @@
+{
+  "dataset": {
+    "memory_path": "paper_results/evaluation/exp1_32b_server_ttft_quick/locomo_8010/autoeval/20260611_140039/config_001_locomo_semantic_8010/sessions/locomo-conv-42/input/memory_units.jsonl",
+    "name": "locomo",
+    "query_path": "paper_results/evaluation/exp1_32b_server_ttft_quick/locomo_8010/autoeval/20260611_140039/config_001_locomo_semantic_8010/sessions/locomo-conv-42/input/query_records.jsonl",
+    "temporal_memory_mask": false
+  },
+  "foreground": {
+    "min_coverage": 0.3
+  },
+  "locality": {
+    "max_units": 1000,
+    "mode": "embedding_ball",
+    "radius_percentile": 100.0,
+    "random_seed": 0
+  },
+  "metadata": {
+    "canonical_exp1_32b_server_ttft_quick": true,
+    "dataset": "locomo",
+    "embedding_model_key": "qwen3-embed-4b",
+    "paper_mode": "semantic",
+    "post_render_scale": 0.7,
+    "runtime_gpu": 0,
+    "runtime_port": 8010,
+    "semantic_policy": "nearest_under_amp",
+    "server_ttft_metric": true,
+    "temporal_memory_mask": false,
+    "visual_budget_policy": "budget_aware_candidate_trim",
+    "width_scale": 1.0
+  },
+  "page": {
+    "key_prefix": "exp1-32b-quick-locomo-semantic-s1:exp1_32b_server_ttft_quick__20260611_140039__cfg001__locomo-conv-42__a001",
+    "max_amplification": 5,
+    "max_cache_visual_tokens": 12000,
+    "max_foreground_update_amplification": null,
+    "max_units": 1000,
+    "max_visual_tokens": 18000
+  },
+  "prewarm": {
+    "max_inflight_pages": 1,
+    "max_new_in_old": 0.5,
+    "min_candidate_coverage": 0.5
+  },
+  "renderer": {
+    "chars_per_line": 72,
+    "font_size": 24,
+    "line_height": 34,
+    "output_dir": "paper_results/rendered_pages/exp1_32b_server_ttft_quick/locomo_scale1_semantic",
+    "padding": 24,
+    "post_render_scale": 0.7,
+    "run_tag": "exp1_32b_server_ttft_quick__20260611_140039__cfg001__locomo-conv-42__a001",
+    "tile_gap": 0,
+    "unit_width": 1024,
+    "width_scale": 1.0
+  },
+  "retrieval": {
+    "embedding_cache_path": "dataset/locomo/processed/embeddings/qwen3-embed-4b.json",
+    "mode": "embedding_retrieve",
+    "topk": 10
+  },
+  "run_name": "exp1_32b_server_ttft_quick",
+  "runtime": {
+    "api_key": null,
+    "background_chunk_tokens": 512,
+    "background_max_tokens": 1,
+    "base_url": "http://127.0.0.1:8010",
+    "foreground_max_tokens": 64,
+    "mode": "vllm",
+    "model": "qwen3vl-32b"
+  }
+}

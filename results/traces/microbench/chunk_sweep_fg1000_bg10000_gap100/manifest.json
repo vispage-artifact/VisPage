@@ -1,0 +1,26 @@
+{
+  "background_image": "images/source_bg_10000vtok.jpg",
+  "background_target_image_tokens": 10000,
+  "base_url": "http://127.0.0.1:8000",
+  "cache_salt": "microbench_server_ttft_fg1000_bg10000_gap100:1781188390061840849",
+  "chunks": [
+    512,
+    1024,
+    2048,
+    4096
+  ],
+  "created_at": "2026-06-11T22:33:10",
+  "fg_delay_ms": 100,
+  "fg_interval_ms": 100,
+  "foreground_image": "images/source_fg_1000vtok.jpg",
+  "foreground_target_image_tokens": 1000,
+  "max_fg_probes": 8,
+  "model": "qwen3vl-8b",
+  "no_priority_chunk_tokens": 100000,
+  "primary_ttft_metric": "server_request_to_first_token_ms",
+  "run_id": "microbench_server_ttft_fg1000_bg10000_gap100",
+  "secondary_ttft_metric": "engine_queue_to_first_token_ms",
+  "trials": 3,
+  "unique_images": true,
+  "warmup": 1
+}

@@ -1,0 +1,75 @@
+{
+  "attempt": 1,
+  "config": {
+    "dataset": {
+      "memory_path": "paper_results/evaluation/exp1_8b_server_ttft_quick/autoeval/20260611_141456/config_000_locomo_random_8013/sessions/locomo-conv-48/input/memory_units.jsonl",
+      "name": "locomo",
+      "query_path": "paper_results/evaluation/exp1_8b_server_ttft_quick/autoeval/20260611_141456/config_000_locomo_random_8013/sessions/locomo-conv-48/input/query_records.jsonl",
+      "temporal_memory_mask": false
+    },
+    "foreground": {
+      "min_coverage": 0.3
+    },
+    "locality": {
+      "max_units": 1000,
+      "mode": "random_anchor",
+      "radius_percentile": null,
+      "random_seed": 0
+    },
+    "metadata": {
+      "dataset": "locomo",
+      "embedding_model_key": "qwen3-embed-4b",
+      "fixed_random_anchor": true,
+      "gpu": 3,
+      "paper_mode": "random",
+      "port": 8013,
+      "server_ttft_rerun": true,
+      "width_scale": 4.0
+    },
+    "page": {
+      "key_prefix": "exp1-8b-server-ttft-locomo-random-s4-gpu3:exp1_8b_server_ttft_quick__20260611_141456__cfg000__locomo-conv-48__a001",
+      "max_amplification": 5,
+      "max_cache_visual_tokens": null,
+      "max_foreground_update_amplification": null,
+      "max_units": 1000,
+      "max_visual_tokens": 60000
+    },
+    "prewarm": {
+      "max_inflight_pages": 1,
+      "max_new_in_old": 0.5,
+      "min_candidate_coverage": 0.5
+    },
+    "renderer": {
+      "chars_per_line": 72,
+      "font_size": 24,
+      "line_height": 34,
+      "output_dir": "paper_results/rendered_pages/exp1_8b_server_ttft_quick/locomo_scale4_random_gpu3",
+      "padding": 24,
+      "post_render_scale": 1.0,
+      "run_tag": "exp1_8b_server_ttft_quick__20260611_141456__cfg000__locomo-conv-48__a001",
+      "tile_gap": 0,
+      "unit_width": 1024,
+      "width_scale": 4.0
+    },
+    "retrieval": {
+      "embedding_cache_path": "dataset/locomo/processed/embeddings/qwen3-embed-4b.json",
+      "mode": "embedding_retrieve",
+      "topk": 10
+    },
+    "run_name": "exp1_8b_server_ttft_quick",
+    "runtime": {
+      "api_key": null,
+      "background_chunk_tokens": 512,
+      "background_max_tokens": 1,
+      "base_url": "http://127.0.0.1:8013",
+      "foreground_max_tokens": 64,
+      "mode": "vllm",
+      "model": "qwen3vl-8b"
+    }
+  },
+  "config_dir": "paper_results/evaluation/exp1_8b_server_ttft_quick/autoeval/20260611_141456/config_000_locomo_random_8013",
+  "memory_count": 681,
+  "query_count": 239,
+  "session_dir": "paper_results/evaluation/exp1_8b_server_ttft_quick/autoeval/20260611_141456/config_000_locomo_random_8013/sessions/locomo-conv-48",
+  "task_id": "locomo:conv-48"
+}

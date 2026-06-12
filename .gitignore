@@ -1,0 +1,30 @@
+# Generated local data and runtime outputs
+data/processed/**
+!data/processed/README.md
+paper_results/
+results/smoke/
+results/figures_reproduced/
+
+# Rendered pages and model/cache artifacts
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.npy
+*.npz
+*.pt
+*.bin
+*.safetensors
+
+# Python and editor caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+
+# Runtime logs
+*.log
+logs/
+run/

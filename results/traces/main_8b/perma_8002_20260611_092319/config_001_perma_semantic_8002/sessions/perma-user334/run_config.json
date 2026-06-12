@@ -1,0 +1,68 @@
+{
+  "dataset": {
+    "memory_path": "paper_results/evaluation/exp1_8b_server_ttft_quick/perma_8002/autoeval/20260611_092319/config_001_perma_semantic_8002/sessions/perma-user334/input/memory_units.jsonl",
+    "name": "perma",
+    "query_path": "paper_results/evaluation/exp1_8b_server_ttft_quick/perma_8002/autoeval/20260611_092319/config_001_perma_semantic_8002/sessions/perma-user334/input/query_records.jsonl",
+    "temporal_memory_mask": true
+  },
+  "foreground": {
+    "min_coverage": 0.3
+  },
+  "locality": {
+    "max_units": 1000,
+    "mode": "embedding_ball",
+    "radius_percentile": 100.0,
+    "random_seed": 0
+  },
+  "metadata": {
+    "dataset": "perma",
+    "embedding_model_key": "qwen3-embed-4b",
+    "gpu": 2,
+    "paper_mode": "semantic",
+    "port": 8002,
+    "semantic_policy": "nearest_under_amp",
+    "server_ttft_rerun": true,
+    "temporal_memory_mask": true,
+    "width_scale": 1.0
+  },
+  "page": {
+    "key_prefix": "exp1-8b-server-ttft-perma-semantic-s1:exp1_8b_server_ttft_quick__20260611_092319__cfg001__perma-user334__a001",
+    "max_amplification": 5,
+    "max_cache_visual_tokens": null,
+    "max_foreground_update_amplification": null,
+    "max_units": 1000,
+    "max_visual_tokens": 60000
+  },
+  "prewarm": {
+    "max_inflight_pages": 1,
+    "max_new_in_old": 0.5,
+    "min_candidate_coverage": 0.5
+  },
+  "renderer": {
+    "chars_per_line": 72,
+    "font_size": 24,
+    "line_height": 34,
+    "output_dir": "paper_results/rendered_pages/exp1_8b_server_ttft_quick/perma_scale1_semantic",
+    "padding": 24,
+    "post_render_scale": 1.0,
+    "run_tag": "exp1_8b_server_ttft_quick__20260611_092319__cfg001__perma-user334__a001",
+    "tile_gap": 0,
+    "unit_width": 1024,
+    "width_scale": 1.0
+  },
+  "retrieval": {
+    "embedding_cache_path": "dataset/perma/processed/embeddings/qwen3-embed-4b.json",
+    "mode": "embedding_retrieve",
+    "topk": 10
+  },
+  "run_name": "exp1_8b_server_ttft_quick",
+  "runtime": {
+    "api_key": null,
+    "background_chunk_tokens": 512,
+    "background_max_tokens": 1,
+    "base_url": "http://127.0.0.1:8002",
+    "foreground_max_tokens": 64,
+    "mode": "vllm",
+    "model": "qwen3vl-8b"
+  }
+}

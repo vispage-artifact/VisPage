@@ -1,0 +1,67 @@
+{
+  "artifacts": {
+    "manifest": "manifest.json",
+    "pages": "pages.jsonl",
+    "run_config": "run_config.json",
+    "summary": "summary.json",
+    "trace": "trace.jsonl"
+  },
+  "config_path": "configs/exp1_8b_server_ttft_quick/perma_baseline_8002.json",
+  "dataset": {
+    "memory_path": "dataset/perma/processed/memory_units.jsonl",
+    "name": "perma",
+    "query_path": "dataset/perma/processed/query_records.jsonl",
+    "temporal_memory_mask": true
+  },
+  "foreground": {
+    "min_coverage": 0.3
+  },
+  "git_commit": "9b3460098d688d53d726ea77c621d6930b36a800",
+  "locality": {
+    "max_units": null,
+    "mode": "baseline",
+    "radius_percentile": null,
+    "random_seed": 0
+  },
+  "output_dir": "paper_results/evaluation/exp1_8b_server_ttft_quick/perma_8002/autoeval/20260611_092319/config_000_perma_baseline_8002",
+  "output_root": "paper_results/evaluation/exp1_8b_server_ttft_quick/perma_8002/autoeval/20260611_092319",
+  "page": {
+    "key_prefix": "exp1-8b-server-ttft-perma-baseline-s1:exp1_8b_server_ttft_quick__20260611_092319__cfg000",
+    "max_amplification": 5,
+    "max_cache_visual_tokens": null,
+    "max_foreground_update_amplification": null,
+    "max_units": 1000,
+    "max_visual_tokens": 60000
+  },
+  "prewarm": {
+    "max_inflight_pages": 1,
+    "max_new_in_old": 0.5,
+    "min_candidate_coverage": 0.5
+  },
+  "query_limit": null,
+  "retrieval": {
+    "embedding_cache_path": "dataset/perma/processed/embeddings/qwen3-embed-4b.json",
+    "mode": "embedding_retrieve",
+    "topk": 10
+  },
+  "run_id": "exp1_8b_server_ttft_quick__perma__embed_qwen3-embed-4b_topk10__baseline__page1000_amp5_fgcov0.3_precov0.5_overlap0.5_inflight1_wscale1_pscale1_vtok60000_cvtoknone__qwen3vl-8b_fg64_bgchunk512__20260611_092319",
+  "runtime": {
+    "api_key": null,
+    "background_chunk_tokens": 512,
+    "background_max_tokens": 1,
+    "base_url": "http://127.0.0.1:8002",
+    "foreground_max_tokens": 64,
+    "mode": "vllm",
+    "model": "qwen3vl-8b"
+  },
+  "segments": {
+    "dataset": "perma",
+    "locality": "baseline",
+    "page_policy": "page1000_amp5_fgcov0.3_precov0.5_overlap0.5_inflight1_wscale1_pscale1_vtok60000_cvtoknone",
+    "retrieval": "embed_qwen3-embed-4b_topk10",
+    "run_name": "exp1_8b_server_ttft_quick",
+    "runtime": "qwen3vl-8b_fg64_bgchunk512",
+    "timestamp": "20260611_092319"
+  },
+  "timestamp": "20260611_092319"
+}

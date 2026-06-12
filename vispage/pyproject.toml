@@ -1,0 +1,13 @@
+[project]
+name = "visual-memory-system"
+version = "0.1.0"
+description = "Modular visual memory paging and prewarm system for agent memory experiments."
+requires-python = ">=3.10"
+dependencies = ["pillow>=10.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100

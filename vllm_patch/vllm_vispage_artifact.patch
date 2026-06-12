@@ -1,0 +1,2622 @@
+diff --git a/vllm/engine/protocol.py b/vllm/engine/protocol.py
+index 0b3b29cd6..de3e290af 100644
+--- a/vllm/engine/protocol.py
++++ b/vllm/engine/protocol.py
+@@ -140,6 +140,20 @@ class EngineClient(ABC):
+         """Reset the encoder cache"""
+         ...
+ 
++    async def get_am_cache_status(self, cache_key: str) -> dict[str, Any]:
++        """Get Agent Memory cache status for a cache key."""
++        raise NotImplementedError
++
++    async def select_am_cache_candidate(
++        self,
++        candidates: list[dict[str, Any]],
++        lease_ttl_ms: int = 2000,
++        allow_encoder_restore: bool = True,
++        wait_restore_ms: int = 0,
++    ) -> dict[str, Any]:
++        """Select and lease an Agent Memory cache candidate."""
++        raise NotImplementedError
++
+     @abstractmethod
+     async def reset_prefix_cache(
+         self, reset_running_requests: bool = False, reset_connector: bool = False
+diff --git a/vllm/entrypoints/openai/am_cache/api_router.py b/vllm/entrypoints/openai/am_cache/api_router.py
+new file mode 100644
+index 000000000..12d9051a1
+--- /dev/null
++++ b/vllm/entrypoints/openai/am_cache/api_router.py
+@@ -0,0 +1,67 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++from fastapi import APIRouter, FastAPI, HTTPException, Request
++from fastapi.responses import JSONResponse
++
++from vllm.engine.protocol import EngineClient
++from vllm.entrypoints.utils import load_aware_call
++
++router = APIRouter()
++
++
++def engine_client(request: Request) -> EngineClient:
++    return request.app.state.engine_client
++
++
++@router.post("/v1/am/cache/select")
++@load_aware_call
++async def select_am_cache_candidate(raw_request: Request):
++    body = await raw_request.json()
++    if not isinstance(body, dict):
++        raise HTTPException(status_code=400, detail="body must be a JSON object")
++
++    candidates = body.get("candidates")
++    if not isinstance(candidates, list):
++        raise HTTPException(status_code=400, detail="candidates must be a list")
++
++    for index, candidate in enumerate(candidates):
++        if not isinstance(candidate, dict):
++            raise HTTPException(
++                status_code=400,
++                detail=f"candidates[{index}] must be an object",
++            )
++        cache_key = candidate.get("cache_key")
++        if not isinstance(cache_key, str) or not cache_key:
++            raise HTTPException(
++                status_code=400,
++                detail=f"candidates[{index}].cache_key must be a non-empty string",
++            )
++
++    lease_ttl_ms = int(body.get("lease_ttl_ms", 2000))
++    if lease_ttl_ms < 0:
++        raise HTTPException(status_code=400, detail="lease_ttl_ms must be >= 0")
++
++    wait_restore_ms = int(body.get("wait_restore_ms", 0))
++    if wait_restore_ms < 0:
++        raise HTTPException(status_code=400, detail="wait_restore_ms must be >= 0")
++
++    allow_encoder_restore = bool(body.get("allow_encoder_restore", True))
++    selected = await engine_client(raw_request).select_am_cache_candidate(
++        candidates=candidates,
++        lease_ttl_ms=lease_ttl_ms,
++        allow_encoder_restore=allow_encoder_restore,
++        wait_restore_ms=wait_restore_ms,
++    )
++    return JSONResponse(content=selected)
++
++
++@router.get("/v1/am/cache/{cache_key:path}")
++@load_aware_call
++async def get_am_cache_status(cache_key: str, raw_request: Request):
++    status = await engine_client(raw_request).get_am_cache_status(cache_key)
++    return JSONResponse(content=status)
++
++
++def attach_router(app: FastAPI):
++    app.include_router(router)
+diff --git a/vllm/entrypoints/openai/api_server.py b/vllm/entrypoints/openai/api_server.py
+index 126e2b402..c5181eaea 100644
+--- a/vllm/entrypoints/openai/api_server.py
++++ b/vllm/entrypoints/openai/api_server.py
+@@ -195,6 +195,12 @@ def build_app(
+ 
+     register_models_api_router(app)
+ 
++    from vllm.entrypoints.openai.am_cache.api_router import (
++        attach_router as register_am_cache_api_router,
++    )
++
++    register_am_cache_api_router(app)
++
+     from vllm.entrypoints.sagemaker.api_router import (
+         attach_router as register_sagemaker_api_router,
+     )
+diff --git a/vllm/entrypoints/openai/chat_completion/protocol.py b/vllm/entrypoints/openai/chat_completion/protocol.py
+index 61763a3b6..63fb28cb7 100644
+--- a/vllm/entrypoints/openai/chat_completion/protocol.py
++++ b/vllm/entrypoints/openai/chat_completion/protocol.py
+@@ -110,6 +110,10 @@ class ChatCompletionResponse(OpenAIBaseModel):
+     kv_transfer_params: dict[str, Any] | None = Field(
+         default=None, description="KVTransfer parameters."
+     )
++    vllm_internal_metrics: dict[str, Any] | None = Field(
++        default=None,
++        description="vLLM-internal experimental timing metrics.",
++    )
+ 
+ 
+ class ChatCompletionResponseStreamChoice(OpenAIBaseModel):
+@@ -131,6 +135,10 @@ class ChatCompletionStreamResponse(OpenAIBaseModel):
+     usage: UsageInfo | None = Field(default=None)
+     # not part of the OpenAI spec but for tracing the tokens
+     prompt_token_ids: list[int] | None = None
++    vllm_internal_metrics: dict[str, Any] | None = Field(
++        default=None,
++        description="vLLM-internal experimental timing metrics.",
++    )
+ 
+ 
+ class ChatCompletionToolsParam(OpenAIBaseModel):
+diff --git a/vllm/entrypoints/openai/chat_completion/serving.py b/vllm/entrypoints/openai/chat_completion/serving.py
+index 2eb550c3e..aeab22adc 100644
+--- a/vllm/entrypoints/openai/chat_completion/serving.py
++++ b/vllm/entrypoints/openai/chat_completion/serving.py
+@@ -83,6 +83,17 @@ if TYPE_CHECKING:
+ logger = init_logger(__name__)
+ 
+ 
++def _make_vllm_internal_metrics(res: RequestOutput) -> dict[str, Any] | None:
++    metrics = res.metrics
++    if metrics is None or metrics.engine_queue_to_first_token_latency <= 0.0:
++        return None
++    return {
++        "engine_queue_to_first_token_ms": (
++            metrics.engine_queue_to_first_token_latency * 1000
++        ),
++    }
++
++
+ class OpenAIServingChat(OpenAIServing):
+     def __init__(
+         self,
+@@ -520,6 +531,7 @@ class OpenAIServingChat(OpenAIServing):
+         finish_reason_sent = [False] * num_choices
+         num_prompt_tokens = 0
+         num_cached_tokens = None
++        vllm_internal_metrics: dict[str, Any] | None = None
+         if self.use_harmony:
+             harmony_parsers = [
+                 get_streamable_parser_for_assistant() for _ in range(num_choices)
+@@ -597,6 +609,7 @@ class OpenAIServingChat(OpenAIServing):
+                 # response (by the try...catch).
+                 if first_iteration:
+                     num_cached_tokens = res.num_cached_tokens
++                    vllm_internal_metrics = _make_vllm_internal_metrics(res)
+                     # Send first response for each request.n (index) with
+                     # the role
+                     role = self.get_chat_request_role(request)
+@@ -626,6 +639,7 @@ class OpenAIServingChat(OpenAIServing):
+                                 if request.return_token_ids
+                                 else None
+                             ),
++                            vllm_internal_metrics=vllm_internal_metrics,
+                         )
+ 
+                         # if continuous usage stats are requested, add it
+@@ -1227,6 +1241,7 @@ class OpenAIServingChat(OpenAIServing):
+                     choices=[],
+                     model=model_name,
+                     usage=final_usage,
++                    vllm_internal_metrics=vllm_internal_metrics,
+                 )
+                 final_usage_data = final_usage_chunk.model_dump_json(
+                     exclude_unset=True, exclude_none=True
+@@ -1620,6 +1635,7 @@ class OpenAIServingChat(OpenAIServing):
+                 final_res.prompt_token_ids if request.return_token_ids else None
+             ),
+             kv_transfer_params=final_res.kv_transfer_params,
++            vllm_internal_metrics=_make_vllm_internal_metrics(final_res),
+         )
+ 
+         # Log complete response if output logging is enabled
+diff --git a/vllm/envs.py b/vllm/envs.py
+index caa2fb38a..24471457d 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -25,6 +25,9 @@ if TYPE_CHECKING:
+     VLLM_ENGINE_ITERATION_TIMEOUT_S: int = 60
+     VLLM_ENGINE_READY_TIMEOUT_S: int = 600
+     VLLM_API_KEY: str | None = None
++    VLLM_AM_ENCODER_CACHE_SIZE: int | None = None
++    VLLM_AM_ENCODER_CACHE_RESERVE: int = 0
++    VLLM_AM_ENCODER_CPU_CACHE_GB: float = 0.0
+     VLLM_DEBUG_LOG_API_SERVER_RESPONSE: bool = False
+     S3_ACCESS_KEY_ID: str | None = None
+     S3_SECRET_ACCESS_KEY: str | None = None
+@@ -636,6 +639,19 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     ),
+     # API key for vLLM API server
+     "VLLM_API_KEY": lambda: os.environ.get("VLLM_API_KEY", None),
++    # Agent Memory experiment: override multimodal encoder cache capacity
++    # and reserve foreground space while protecting background prewarm entries.
++    "VLLM_AM_ENCODER_CACHE_SIZE": lambda: (
++        int(os.environ["VLLM_AM_ENCODER_CACHE_SIZE"])
++        if os.environ.get("VLLM_AM_ENCODER_CACHE_SIZE")
++        else None
++    ),
++    "VLLM_AM_ENCODER_CACHE_RESERVE": lambda: int(
++        os.environ.get("VLLM_AM_ENCODER_CACHE_RESERVE", "0")
++    ),
++    "VLLM_AM_ENCODER_CPU_CACHE_GB": lambda: float(
++        os.environ.get("VLLM_AM_ENCODER_CPU_CACHE_GB", "0")
++    ),
+     # Whether to log responses from API Server for debugging
+     "VLLM_DEBUG_LOG_API_SERVER_RESPONSE": lambda: os.environ.get(
+         "VLLM_DEBUG_LOG_API_SERVER_RESPONSE", "False"
+diff --git a/vllm/v1/core/am_cache_registry.py b/vllm/v1/core/am_cache_registry.py
+new file mode 100644
+index 000000000..2cfb66980
+--- /dev/null
++++ b/vllm/v1/core/am_cache_registry.py
+@@ -0,0 +1,170 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++import time
++from dataclasses import dataclass, field
++from typing import Any
++
++
++@dataclass
++class AMCacheEntry:
++    cache_key: str
++    role: str
++    state: str = "warming"
++    prompt_tokens: int = 0
++    cached_tokens: int = 0
++    live_blocks: int = 0
++    evicted_blocks: int = 0
++    last_event: str = "queued"
++    last_update_ms: float = field(default_factory=lambda: time.time() * 1000)
++    last_encoder_event: str | None = None
++    last_encoder_update_ms: float = 0.0
++
++    def to_dict(self) -> dict[str, Any]:
++        return {
++            "cache_key": self.cache_key,
++            "role": self.role,
++            "state": self.state,
++            "ready": self.state == "ready",
++            "prompt_tokens": self.prompt_tokens,
++            "cached_tokens": self.cached_tokens,
++            "live_blocks": self.live_blocks,
++            "evicted_blocks": self.evicted_blocks,
++            "last_event": self.last_event,
++            "last_update_ms": self.last_update_ms,
++            "last_encoder_event": self.last_encoder_event,
++            "last_encoder_update_ms": self.last_encoder_update_ms,
++        }
++
++
++class AMCacheRegistry:
++    """Lightweight Agent Memory cache state registry.
++
++    This registry tracks AM cache keys at the KV block level. It is intentionally
++    conservative: a key is downgraded when any registered KV block is overwritten
++    by the block pool, so an external agent can avoid assuming a prefetched
++    memory is still fully available.
++    """
++
++    def __init__(self) -> None:
++        self._entries: dict[str, AMCacheEntry] = {}
++        self._block_to_key: dict[int, str] = {}
++        self._block_tokens: dict[int, int] = {}
++
++    def register_request(self, cache_key: str, role: str, prompt_tokens: int) -> None:
++        entry = self._entries.get(cache_key)
++        if entry is None:
++            self._entries[cache_key] = AMCacheEntry(
++                cache_key=cache_key,
++                role=role,
++                prompt_tokens=prompt_tokens,
++            )
++            return
++        entry.role = role
++        entry.prompt_tokens = max(entry.prompt_tokens, prompt_tokens)
++        entry.last_event = "queued"
++        entry.last_update_ms = time.time() * 1000
++        if entry.state == "evicted":
++            entry.state = "warming"
++
++    def register_cached_block(
++        self,
++        cache_key: str,
++        role: str,
++        prompt_tokens: int,
++        block_id: int,
++        block_tokens: int,
++    ) -> None:
++        entry = self._entries.get(cache_key)
++        if entry is None:
++            entry = AMCacheEntry(
++                cache_key=cache_key,
++                role=role,
++                prompt_tokens=prompt_tokens,
++            )
++            self._entries[cache_key] = entry
++
++        previous_key = self._block_to_key.get(block_id)
++        if previous_key == cache_key:
++            return
++        if previous_key is not None:
++            self._evict_block_id(block_id, "kv_block_reassigned")
++
++        self._block_to_key[block_id] = cache_key
++        self._block_tokens[block_id] = block_tokens
++        entry.role = role
++        entry.prompt_tokens = max(entry.prompt_tokens, prompt_tokens)
++        entry.live_blocks += 1
++        entry.cached_tokens += block_tokens
++        if entry.state == "evicted":
++            entry.state = "partial"
++        entry.last_event = "kv_block_cached"
++        entry.last_update_ms = time.time() * 1000
++
++    def mark_ready(self, cache_key: str, prompt_tokens: int) -> None:
++        entry = self._entries.get(cache_key)
++        if entry is None:
++            entry = AMCacheEntry(cache_key=cache_key, role="unknown")
++            self._entries[cache_key] = entry
++        entry.prompt_tokens = max(entry.prompt_tokens, prompt_tokens)
++        if entry.live_blocks > 0:
++            entry.state = "ready"
++        else:
++            entry.state = "partial"
++        entry.last_event = "prefill_ready"
++        entry.last_update_ms = time.time() * 1000
++
++    def evict_block(self, block_id: int) -> None:
++        self._evict_block_id(block_id, "kv_block_evicted")
++
++    def mark_encoder_evicted(self, cache_key: str) -> None:
++        """Record encoder-cache eviction without changing KV readiness.
++
++        AM `state` is intentionally KV-only. A missing GPU encoder tensor can
++        hurt requests whose remaining prefill range overlaps image tokens, but
++        it does not mean registered decoder KV blocks were lost.
++        """
++        entry = self._entries.get(cache_key)
++        if entry is None:
++            entry = AMCacheEntry(cache_key=cache_key, role="unknown")
++            self._entries[cache_key] = entry
++        entry.last_encoder_event = "encoder_cache_evicted"
++        entry.last_encoder_update_ms = time.time() * 1000
++
++    def _evict_block_id(self, block_id: int, event: str) -> None:
++        cache_key = self._block_to_key.pop(block_id, None)
++        block_tokens = self._block_tokens.pop(block_id, 0)
++        if cache_key is None:
++            return
++        entry = self._entries.get(cache_key)
++        if entry is None:
++            return
++        entry.live_blocks = max(0, entry.live_blocks - 1)
++        entry.evicted_blocks += 1
++        entry.cached_tokens = max(0, entry.cached_tokens - block_tokens)
++        entry.state = "evicted" if entry.live_blocks == 0 else "partial"
++        entry.last_event = event
++        entry.last_update_ms = time.time() * 1000
++
++    def get_status(self, cache_key: str) -> dict[str, Any]:
++        entry = self._entries.get(cache_key)
++        if entry is None:
++            return {
++                "cache_key": cache_key,
++                "state": "missing",
++                "ready": False,
++                "prompt_tokens": 0,
++                "cached_tokens": 0,
++                "live_blocks": 0,
++                "evicted_blocks": 0,
++                "last_event": "missing",
++                "last_update_ms": time.time() * 1000,
++                "last_encoder_event": None,
++                "last_encoder_update_ms": 0.0,
++            }
++        return entry.to_dict()
++
++    def reset(self) -> None:
++        self._entries.clear()
++        self._block_to_key.clear()
++        self._block_tokens.clear()
+diff --git a/vllm/v1/core/block_pool.py b/vllm/v1/core/block_pool.py
+index 4b62d2a4c..a54999a1b 100644
+--- a/vllm/v1/core/block_pool.py
++++ b/vllm/v1/core/block_pool.py
+@@ -11,6 +11,7 @@ from vllm.distributed.kv_events import (
+     KVCacheEvent,
+ )
+ from vllm.logger import init_logger
++from vllm.v1.core.am_cache_registry import AMCacheRegistry
+ from vllm.v1.core.kv_cache_metrics import KVCacheMetricsCollector
+ from vllm.v1.core.kv_cache_utils import (
+     BlockHash,
+@@ -152,6 +153,7 @@ class BlockPool:
+         hash_block_size: int,
+         enable_kv_cache_events: bool = False,
+         metrics_collector: KVCacheMetricsCollector | None = None,
++        am_cache_registry: AMCacheRegistry | None = None,
+     ):
+         assert isinstance(num_gpu_blocks, int) and num_gpu_blocks > 0
+         self.num_gpu_blocks = num_gpu_blocks
+@@ -179,6 +181,7 @@ class BlockPool:
+         self.kv_event_queue: list[KVCacheEvent] = []
+ 
+         self.metrics_collector = metrics_collector
++        self.am_cache_registry = am_cache_registry
+ 
+     def get_cached_block(
+         self, block_hash: BlockHash, kv_cache_group_ids: list[int]
+@@ -269,6 +272,14 @@ class BlockPool:
+             )
+             blk.block_hash = block_hash_with_group_id
+             self.cached_block_hash_to_block.insert(block_hash_with_group_id, blk)
++            if request.am_cache_key and self.am_cache_registry is not None:
++                self.am_cache_registry.register_cached_block(
++                    request.am_cache_key,
++                    request.am_role,
++                    request.num_prompt_tokens,
++                    blk.block_id,
++                    block_size,
++                )
+             if new_hashes is not None:
+                 new_hashes.append(maybe_convert_block_hash(block_hash))
+ 
+@@ -374,6 +385,9 @@ class BlockPool:
+             # eviction is not needed
+             return False
+ 
++        if self.am_cache_registry is not None:
++            self.am_cache_registry.evict_block(block.block_id)
++
+         block.reset_hash()
+ 
+         if self.enable_kv_cache_events:
+@@ -468,6 +482,8 @@ class BlockPool:
+ 
+         if self.metrics_collector:
+             self.metrics_collector.reset()
++        if self.am_cache_registry is not None:
++            self.am_cache_registry.reset()
+ 
+         logger.info("Successfully reset prefix cache")
+ 
+diff --git a/vllm/v1/core/encoder_cache_manager.py b/vllm/v1/core/encoder_cache_manager.py
+index 6f1a2560d..034afdd09 100644
+--- a/vllm/v1/core/encoder_cache_manager.py
++++ b/vllm/v1/core/encoder_cache_manager.py
+@@ -64,8 +64,9 @@ class EncoderCacheManager:
+             last call to get_freed_mm_hashes(). This list is cleared on return.
+     """
+ 
+-    def __init__(self, cache_size: int):
++    def __init__(self, cache_size: int, am_protected_reserve: int = 0):
+         self.cache_size = cache_size
++        self.am_protected_reserve = min(max(0, am_protected_reserve), cache_size)
+         self.num_free_slots = cache_size
+         self.num_freeable_slots = cache_size
+ 
+@@ -75,6 +76,7 @@ class EncoderCacheManager:
+         # mm_hash of mm_data => num_encoder_embeds of the mm_data
+         self.freeable: OrderedDict[str, int] = OrderedDict()
+         self.freed: list[str] = []
++        self.protected: OrderedDict[str, int] = OrderedDict()
+ 
+     def reset(self) -> None:
+         """Reset the encoder cache to its initial state.
+@@ -85,6 +87,7 @@ class EncoderCacheManager:
+         self.cached.clear()
+         self.freeable.clear()
+         self.freed.clear()
++        self.protected.clear()
+         self.num_free_slots = self.cache_size
+         self.num_freeable_slots = self.cache_size
+ 
+@@ -110,8 +113,11 @@ class EncoderCacheManager:
+ 
+         # Cached but currently not referenced by any request
+         if not self.cached[mm_hash]:
+-            num_encoder_embeds = self.freeable.pop(mm_hash)
+-            self.num_freeable_slots -= num_encoder_embeds
++            if mm_hash in self.protected:
++                self.protected.move_to_end(mm_hash)
++            else:
++                num_encoder_embeds = self.freeable.pop(mm_hash)
++                self.num_freeable_slots -= num_encoder_embeds
+ 
+         self.cached[mm_hash].add(request.request_id)
+         return True
+@@ -158,23 +164,23 @@ class EncoderCacheManager:
+             return False
+ 
+         num_embeds += num_embeds_to_schedule
++        target_free_slots = num_embeds
++        if request.is_am_background:
++            target_free_slots += self.am_protected_reserve
+ 
+         # Enough free slots
+-        if num_embeds <= self.num_free_slots:
++        if target_free_slots <= self.num_free_slots:
+             return True
+ 
+-        # Not enough reclaimable slots
+-        if num_embeds > self.num_freeable_slots:
++        protected_freeable_slots = self._get_protected_freeable_slots()
++        reclaimable_slots = self.num_freeable_slots + protected_freeable_slots
++        if target_free_slots > reclaimable_slots:
+             return False
+ 
+-        # Not enough free slots but enough reclaimable slots
++        # Not enough free slots but enough reclaimable slots.
+         # NOTE: Eviction takes place here, but physical memory is not freed
+         # until model runner is notified by the scheduler output.
+-        while num_embeds > self.num_free_slots:
+-            mm_hash, num_free_embeds = self.freeable.popitem(last=False)
+-            del self.cached[mm_hash]
+-            self.freed.append(mm_hash)
+-            self.num_free_slots += num_free_embeds
++        self._evict_until_free(target_free_slots)
+         return True
+ 
+     def allocate(self, request: Request, input_id: int) -> None:
+@@ -204,6 +210,42 @@ class EncoderCacheManager:
+         self.num_free_slots -= num_encoder_embeds
+         self.num_freeable_slots -= num_encoder_embeds
+ 
++    def protect(self, request: Request, input_id: int) -> None:
++        """Protect a cached background encoder output with LRU eviction.
++
++        Protection is used by Agent Memory background prewarm. A protected entry
++        is not part of the normal freeable LRU once its request finishes, but it
++        can still be evicted under encoder-cache pressure. This prevents
++        background image embeddings from blocking foreground/residual inputs
++        indefinitely.
++        """
++        mm_hash = request.mm_features[input_id].identifier
++        if mm_hash not in self.cached:
++            return
++        num_encoder_embeds = request.get_num_encoder_embeds(input_id)
++        if mm_hash in self.freeable:
++            self.freeable.pop(mm_hash)
++            self.num_freeable_slots -= num_encoder_embeds
++        self.protected[mm_hash] = num_encoder_embeds
++        self.protected.move_to_end(mm_hash)
++
++    def pin(self, request: Request, input_id: int) -> None:
++        self.protect(request, input_id)
++
++    def is_pinned(self, request: Request, input_id: int) -> bool:
++        mm_hash = request.mm_features[input_id].identifier
++        return mm_hash in self.protected
++
++    def has_cache_item(self, mm_hash: str) -> bool:
++        return mm_hash in self.cached
++
++    def touch(self, mm_hash: str) -> bool:
++        """Refresh protected-entry LRU order for a selected cache key."""
++        if mm_hash not in self.cached or mm_hash not in self.protected:
++            return False
++        self.protected.move_to_end(mm_hash)
++        return True
++
+     def get_cached_input_ids(self, request: Request) -> set[int]:
+         """Get all cached multimodal input IDs for a request.
+ 
+@@ -234,7 +276,7 @@ class EncoderCacheManager:
+         if not self.cached.get(mm_hash, None):
+             return
+         self.cached[mm_hash].discard(req_id)
+-        if not self.cached[mm_hash]:
++        if not self.cached[mm_hash] and mm_hash not in self.protected:
+             num_encoder_embeds = request.get_num_encoder_embeds(input_id)
+             self.freeable[mm_hash] = num_encoder_embeds
+             self.num_freeable_slots += num_encoder_embeds
+@@ -265,6 +307,50 @@ class EncoderCacheManager:
+         self.freed = []
+         return freed
+ 
++    def get_stats(self) -> dict[str, int]:
++        protected_slots = sum(self.protected.values())
++        protected_freeable_slots = self._get_protected_freeable_slots()
++        return {
++            "cache_size": self.cache_size,
++            "reserve": self.am_protected_reserve,
++            "free": self.num_free_slots,
++            "freeable": self.num_freeable_slots,
++            "protected": protected_slots,
++            "protected_freeable": protected_freeable_slots,
++            "protected_items": len(self.protected),
++        }
++
++    def _get_protected_freeable_slots(self) -> int:
++        return sum(
++            num_embeds
++            for mm_hash, num_embeds in self.protected.items()
++            if not self.cached.get(mm_hash)
++        )
++
++    def _evict_until_free(self, target_free_slots: int) -> None:
++        while target_free_slots > self.num_free_slots and self.freeable:
++            mm_hash, num_free_embeds = self.freeable.popitem(last=False)
++            del self.cached[mm_hash]
++            self.freed.append(mm_hash)
++            self.num_free_slots += num_free_embeds
++
++        while target_free_slots > self.num_free_slots:
++            evicted = self._evict_one_protected()
++            if not evicted:
++                break
++
++    def _evict_one_protected(self) -> bool:
++        for mm_hash, num_free_embeds in list(self.protected.items()):
++            if self.cached.get(mm_hash):
++                continue
++            self.protected.pop(mm_hash)
++            del self.cached[mm_hash]
++            self.freed.append(mm_hash)
++            self.num_free_slots += num_free_embeds
++            self.num_freeable_slots += num_free_embeds
++            return True
++        return False
++
+ 
+ def compute_mm_encoder_budget(
+     scheduler_config: "SchedulerConfig",
+@@ -366,6 +452,12 @@ class EncoderDecoderCacheManager(EncoderCacheManager):
+     def get_cached_input_ids(self, request: Request) -> set[int]:
+         return set(range(len(request.mm_features)))
+ 
++    def has_cache_item(self, mm_hash: str) -> bool:
++        return mm_hash in self.allocated
++
++    def touch(self, mm_hash: str) -> bool:
++        return mm_hash in self.allocated
++
+     def get_freed_mm_hashes(self) -> list[str]:
+         # As encoder cache is not used for enc-dec models, we can free the entries here
+         # The actual free happens in the runner, *before* the model is executed.
+diff --git a/vllm/v1/core/kv_cache_coordinator.py b/vllm/v1/core/kv_cache_coordinator.py
+index eaa95dfe4..090471a94 100644
+--- a/vllm/v1/core/kv_cache_coordinator.py
++++ b/vllm/v1/core/kv_cache_coordinator.py
+@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
+ from collections.abc import Sequence
+ from math import lcm
+ 
++from vllm.v1.core.am_cache_registry import AMCacheRegistry
+ from vllm.v1.core.block_pool import BlockPool
+ from vllm.v1.core.kv_cache_metrics import KVCacheMetricsCollector
+ from vllm.v1.core.kv_cache_utils import (
+@@ -41,6 +42,7 @@ class KVCacheCoordinator(ABC):
+         pcp_world_size: int,
+         hash_block_size: int,
+         metrics_collector: KVCacheMetricsCollector | None = None,
++        am_cache_registry: AMCacheRegistry | None = None,
+     ):
+         self.kv_cache_config = kv_cache_config
+         self.max_model_len = max_model_len
+@@ -52,6 +54,7 @@ class KVCacheCoordinator(ABC):
+             hash_block_size,
+             enable_kv_cache_events,
+             metrics_collector,
++            am_cache_registry,
+         )
+ 
+         # Needs special handling for find_longest_cache_hit if eagle is enabled
+@@ -271,6 +274,7 @@ class KVCacheCoordinatorNoPrefixCache(KVCacheCoordinator):
+         pcp_world_size: int,
+         hash_block_size: int,
+         metrics_collector: KVCacheMetricsCollector | None = None,
++        am_cache_registry: AMCacheRegistry | None = None,
+     ):
+         super().__init__(
+             kv_cache_config,
+@@ -282,6 +286,7 @@ class KVCacheCoordinatorNoPrefixCache(KVCacheCoordinator):
+             pcp_world_size=pcp_world_size,
+             hash_block_size=hash_block_size,
+             metrics_collector=metrics_collector,
++            am_cache_registry=am_cache_registry,
+         )
+         self.num_single_type_manager = len(self.single_type_managers)
+ 
+@@ -317,6 +322,7 @@ class UnitaryKVCacheCoordinator(KVCacheCoordinator):
+         pcp_world_size: int,
+         hash_block_size: int,
+         metrics_collector: KVCacheMetricsCollector | None = None,
++        am_cache_registry: AMCacheRegistry | None = None,
+     ):
+         super().__init__(
+             kv_cache_config,
+@@ -328,6 +334,7 @@ class UnitaryKVCacheCoordinator(KVCacheCoordinator):
+             pcp_world_size=pcp_world_size,
+             hash_block_size=hash_block_size,
+             metrics_collector=metrics_collector,
++            am_cache_registry=am_cache_registry,
+         )
+         self.kv_cache_spec = self.kv_cache_config.kv_cache_groups[0].kv_cache_spec
+         self.block_size = self.kv_cache_spec.block_size
+@@ -382,6 +389,7 @@ class HybridKVCacheCoordinator(KVCacheCoordinator):
+         pcp_world_size: int,
+         hash_block_size: int,
+         metrics_collector: KVCacheMetricsCollector | None = None,
++        am_cache_registry: AMCacheRegistry | None = None,
+     ):
+         super().__init__(
+             kv_cache_config,
+@@ -393,6 +401,7 @@ class HybridKVCacheCoordinator(KVCacheCoordinator):
+             pcp_world_size=pcp_world_size,
+             hash_block_size=hash_block_size,
+             metrics_collector=metrics_collector,
++            am_cache_registry=am_cache_registry,
+         )
+         # hash_block_size: the block size used to compute block hashes.
+         # The actual block size usually equals hash_block_size, but in cases where
+@@ -554,6 +563,7 @@ def get_kv_cache_coordinator(
+     pcp_world_size: int,
+     hash_block_size: int,
+     metrics_collector: KVCacheMetricsCollector | None = None,
++    am_cache_registry: AMCacheRegistry | None = None,
+ ) -> KVCacheCoordinator:
+     if not enable_caching:
+         return KVCacheCoordinatorNoPrefixCache(
+@@ -565,6 +575,7 @@ def get_kv_cache_coordinator(
+             pcp_world_size=pcp_world_size,
+             hash_block_size=hash_block_size,
+             metrics_collector=metrics_collector,
++            am_cache_registry=am_cache_registry,
+         )
+     if len(kv_cache_config.kv_cache_groups) == 1:
+         return UnitaryKVCacheCoordinator(
+@@ -577,6 +588,7 @@ def get_kv_cache_coordinator(
+             pcp_world_size=pcp_world_size,
+             hash_block_size=hash_block_size,
+             metrics_collector=metrics_collector,
++            am_cache_registry=am_cache_registry,
+         )
+     return HybridKVCacheCoordinator(
+         kv_cache_config,
+@@ -588,4 +600,5 @@ def get_kv_cache_coordinator(
+         pcp_world_size=pcp_world_size,
+         hash_block_size=hash_block_size,
+         metrics_collector=metrics_collector,
++        am_cache_registry=am_cache_registry,
+     )
+diff --git a/vllm/v1/core/kv_cache_manager.py b/vllm/v1/core/kv_cache_manager.py
+index 2c712a1b1..ec24513fb 100644
+--- a/vllm/v1/core/kv_cache_manager.py
++++ b/vllm/v1/core/kv_cache_manager.py
+@@ -8,6 +8,7 @@ from typing import Literal, overload
+ 
+ from vllm.distributed.kv_events import KVCacheEvent
+ from vllm.logger import init_logger
++from vllm.v1.core.am_cache_registry import AMCacheRegistry
+ from vllm.v1.core.kv_cache_coordinator import get_kv_cache_coordinator
+ from vllm.v1.core.kv_cache_metrics import KVCacheMetricsCollector
+ from vllm.v1.core.kv_cache_utils import KVCacheBlock
+@@ -116,6 +117,7 @@ class KVCacheManager:
+         dcp_world_size: int = 1,
+         pcp_world_size: int = 1,
+         metrics_collector: KVCacheMetricsCollector | None = None,
++        am_cache_registry: AMCacheRegistry | None = None,
+     ) -> None:
+         self.max_model_len = max_model_len
+ 
+@@ -138,6 +140,7 @@ class KVCacheManager:
+             pcp_world_size=pcp_world_size,
+             hash_block_size=hash_block_size,
+             metrics_collector=self.metrics_collector,
++            am_cache_registry=am_cache_registry,
+         )
+         self.num_kv_cache_groups = len(kv_cache_config.kv_cache_groups)
+         self.block_pool = self.coordinator.block_pool
+diff --git a/vllm/v1/core/sched/scheduler.py b/vllm/v1/core/sched/scheduler.py
+index e3ced121e..58aca43fd 100644
+--- a/vllm/v1/core/sched/scheduler.py
++++ b/vllm/v1/core/sched/scheduler.py
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ import itertools
++import json
+ import time
+ from collections import defaultdict, deque
+ from collections.abc import Iterable
+@@ -32,6 +33,7 @@ from vllm.model_executor.layers.fused_moe.routed_experts_capturer import (
+ )
+ from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
+ from vllm.multimodal.encoder_budget import MultiModalBudget
++from vllm.v1.core.am_cache_registry import AMCacheRegistry
+ from vllm.v1.core.encoder_cache_manager import (
+     EncoderCacheManager,
+     EncoderDecoderCacheManager,
+@@ -101,6 +103,10 @@ class Scheduler(SchedulerInterface):
+         )
+         self.prev_step_scheduled_req_ids: set[str] = set()
+         self._am_timeline_step_id = 0
++        self.am_cache_registry = AMCacheRegistry()
++        self._am_encoder_hash_to_cache_key: dict[str, str] = {}
++        self._am_cache_key_to_encoder_hash: dict[str, str] = {}
++        self._am_cache_leases: dict[str, dict[str, Any]] = {}
+ 
+         # Scheduling constraints.
+         self.max_num_running_reqs = self.scheduler_config.max_num_seqs
+@@ -205,10 +211,22 @@ class Scheduler(SchedulerInterface):
+             mm_budget.encoder_compute_budget if mm_budget else 0
+         )
+         encoder_cache_size = mm_budget.encoder_cache_size if mm_budget else 0
++        am_encoder_cache_size = envs.VLLM_AM_ENCODER_CACHE_SIZE
++        am_encoder_cache_reserve = envs.VLLM_AM_ENCODER_CACHE_RESERVE
++        if am_encoder_cache_size is not None:
++            encoder_cache_size = max(encoder_cache_size, am_encoder_cache_size)
++            logger.info(
++                "AM encoder cache size override enabled: size=%s reserve=%s",
++                encoder_cache_size,
++                am_encoder_cache_reserve,
++            )
+         self.encoder_cache_manager = (
+             EncoderDecoderCacheManager(cache_size=encoder_cache_size)
+             if self.is_encoder_decoder
+-            else EncoderCacheManager(cache_size=encoder_cache_size)
++            else EncoderCacheManager(
++                cache_size=encoder_cache_size,
++                am_protected_reserve=am_encoder_cache_reserve,
++            )
+         )
+ 
+         speculative_config = vllm_config.speculative_config
+@@ -234,6 +252,7 @@ class Scheduler(SchedulerInterface):
+             pcp_world_size=self.pcp_world_size,
+             hash_block_size=self.block_size,
+             metrics_collector=self.kv_metrics_collector,
++            am_cache_registry=self.am_cache_registry,
+         )
+         self.use_pp = self.parallel_config.pipeline_parallel_size > 1
+         self.use_v2_model_runner = envs.VLLM_USE_V2_MODEL_RUNNER
+@@ -356,8 +375,16 @@ class Scheduler(SchedulerInterface):
+         """
+         return self._has_foreground_work()
+ 
+-    def _should_schedule_am_background(self, request: Request) -> bool:
+-        return not request.is_am_background or not self._has_foreground_work()
++    def _should_schedule_am_background(
++        self, request: Request, *, source: str
++    ) -> bool:
++        if not request.is_am_background:
++            return True
++        if not self._has_foreground_work():
++            return True
++        if source == "running" and not request.am_pause_on_foreground:
++            return True
++        return request.am_decode_overlap and not self._has_foreground_prefill_work()
+ 
+     @staticmethod
+     def _apply_am_background_token_cap(
+@@ -373,10 +400,20 @@ class Scheduler(SchedulerInterface):
+             for request in itertools.chain(self.waiting, self.skipped_waiting)
+         )
+ 
++    def _has_foreground_prefill_work(self) -> bool:
++        if self._has_foreground_waiting_work():
++            return True
++        return any(
++            not request.is_am_background
++            and request.num_computed_tokens < request.num_prompt_tokens
++            for request in self.running
++        )
++
+     @staticmethod
+     def _can_pause_am_background_request(request: Request) -> bool:
+         return (
+             request.is_am_background
++            and request.am_pause_on_foreground
+             and request.status == RequestStatus.RUNNING
+             and not request.is_finished()
+             and request.num_computed_tokens < request.num_prompt_tokens
+@@ -424,11 +461,15 @@ class Scheduler(SchedulerInterface):
+             else "decode"
+         )
+         self._am_timeline_step_id += 1
++        lease_state, lease_valid = self._get_am_request_lease_status(request)
+         timeline_events[request.request_id] = {
+             "step_id": self._am_timeline_step_id,
+             "request_id": request.request_id,
+             "role": request.am_role,
+             "cache_key": request.am_cache_key,
++            "lease_id": request.am_lease_id,
++            "lease_state": lease_state,
++            "lease_valid": lease_valid,
+             "source": source,
+             "phase": phase,
+             "num_new_tokens": num_new_tokens,
+@@ -437,19 +478,26 @@ class Scheduler(SchedulerInterface):
+             "prompt_tokens": request.num_prompt_tokens,
+             "total_tokens": request.num_tokens,
+             "chunk_tokens": request.am_chunk_tokens,
++            "decode_overlap": request.am_decode_overlap,
++            "pause_on_foreground": request.am_pause_on_foreground,
+             "prefetch_state": request.am_prefetch_state,
+             "schedule_mono_ms": mono_ms,
+             "schedule_epoch_ms": epoch_ms,
+         }
+         logger.info(
+             "AM timeline scheduled: step_id=%s request_id=%s role=%s "
+-            "cache_key=%s source=%s phase=%s num_new_tokens=%s "
++            "cache_key=%s lease_id=%s lease_state=%s lease_valid=%s "
++            "source=%s phase=%s num_new_tokens=%s "
+             "computed_before=%s computed_after=%s prompt_tokens=%s "
+-            "chunk_tokens=%s schedule_mono_ms=%.3f schedule_epoch_ms=%.3f",
++            "chunk_tokens=%s decode_overlap=%s pause_on_foreground=%s "
++            "schedule_mono_ms=%.3f schedule_epoch_ms=%.3f",
+             self._am_timeline_step_id,
+             request.request_id,
+             request.am_role,
+             request.am_cache_key,
++            request.am_lease_id,
++            lease_state,
++            lease_valid,
+             source,
+             phase,
+             num_new_tokens,
+@@ -457,6 +505,8 @@ class Scheduler(SchedulerInterface):
+             computed_before + num_new_tokens,
+             request.num_prompt_tokens,
+             request.am_chunk_tokens,
++            request.am_decode_overlap,
++            request.am_pause_on_foreground,
+             mono_ms,
+             epoch_ms,
+         )
+@@ -486,6 +536,7 @@ class Scheduler(SchedulerInterface):
+         num_scheduled_tokens: dict[str, int] = {}
+         am_timeline_events: dict[str, dict[str, Any]] = {}
+         token_budget = self.max_num_scheduled_tokens
++        am_background_chunks_scheduled = 0
+         if self._pause_state == PauseState.PAUSED_ALL:
+             # Do not schedule any requests when paused.
+             token_budget = 0
+@@ -506,7 +557,10 @@ class Scheduler(SchedulerInterface):
+         req_index = 0
+         while req_index < len(self.running) and token_budget > 0:
+             request = self.running[req_index]
+-            if not self._should_schedule_am_background(request):
++            if not self._should_schedule_am_background(request, source="running"):
++                req_index += 1
++                continue
++            if request.is_am_background and am_background_chunks_scheduled > 0:
+                 req_index += 1
+                 continue
+ 
+@@ -647,6 +701,8 @@ class Scheduler(SchedulerInterface):
+             )
+             self._log_am_request_scheduled(request, num_new_tokens, "running")
+             token_budget -= num_new_tokens
++            if request.is_am_background:
++                am_background_chunks_scheduled += 1
+             req_index += 1
+ 
+             # Speculative decode related.
+@@ -673,12 +729,14 @@ class Scheduler(SchedulerInterface):
+                 # Allocate the encoder cache.
+                 for i in encoder_inputs_to_schedule:
+                     self.encoder_cache_manager.allocate(request, i)
++                    self._pin_am_background_encoder_input(request, i)
+                     if self.ec_connector is not None:
+                         self.ec_connector.update_state_after_alloc(request, i)
+                 encoder_compute_budget = new_encoder_compute_budget
+             if external_load_encoder_input:
+                 for i in external_load_encoder_input:
+                     self.encoder_cache_manager.allocate(request, i)
++                    self._pin_am_background_encoder_input(request, i)
+                     if self.ec_connector is not None:
+                         self.ec_connector.update_state_after_alloc(request, i)
+ 
+@@ -719,10 +777,12 @@ class Scheduler(SchedulerInterface):
+                     step_skipped_waiting.prepend_request(request)
+                     continue
+ 
+-                if not self._should_schedule_am_background(request):
++                if not self._should_schedule_am_background(request, source="waiting"):
+                     request_queue.pop_request()
+                     step_skipped_waiting.prepend_request(request)
+                     continue
++                if request.is_am_background and am_background_chunks_scheduled > 0:
++                    break
+ 
+                 # Check that adding the request still respects the max_loras
+                 # constraint.
+@@ -958,6 +1018,8 @@ class Scheduler(SchedulerInterface):
+                 )
+                 self._log_am_request_scheduled(request, num_new_tokens, "waiting")
+                 token_budget -= num_new_tokens
++                if request.is_am_background:
++                    am_background_chunks_scheduled += 1
+                 request.status = RequestStatus.RUNNING
+                 request.num_computed_tokens = num_computed_tokens
+                 # Count the number of prefix cached tokens.
+@@ -969,6 +1031,7 @@ class Scheduler(SchedulerInterface):
+                     # Allocate the encoder cache.
+                     for i in encoder_inputs_to_schedule:
+                         self.encoder_cache_manager.allocate(request, i)
++                        self._pin_am_background_encoder_input(request, i)
+                         if self.ec_connector is not None:
+                             self.ec_connector.update_state_after_alloc(request, i)
+                     encoder_compute_budget = new_encoder_compute_budget
+@@ -976,6 +1039,7 @@ class Scheduler(SchedulerInterface):
+                 if external_load_encoder_input:
+                     for i in external_load_encoder_input:
+                         self.encoder_cache_manager.allocate(request, i)
++                        self._pin_am_background_encoder_input(request, i)
+                         if self.ec_connector is not None:
+                             self.ec_connector.update_state_after_alloc(request, i)
+ 
+@@ -1044,6 +1108,8 @@ class Scheduler(SchedulerInterface):
+             if self.needs_kv_cache_zeroing
+             else None
+         )
++        free_encoder_mm_hashes = self.encoder_cache_manager.get_freed_mm_hashes()
++        self._mark_am_encoder_cache_evictions(free_encoder_mm_hashes)
+ 
+         scheduler_output = SchedulerOutput(
+             scheduled_new_reqs=new_reqs_data,
+@@ -1059,7 +1125,7 @@ class Scheduler(SchedulerInterface):
+             # It contains the request IDs that are finished in between
+             # the previous and the current steps.
+             finished_req_ids=self.finished_req_ids,
+-            free_encoder_mm_hashes=self.encoder_cache_manager.get_freed_mm_hashes(),
++            free_encoder_mm_hashes=free_encoder_mm_hashes,
+             new_block_ids_to_zero=new_block_ids_to_zero,
+             am_timeline_events=am_timeline_events or None,
+         )
+@@ -1890,15 +1956,30 @@ class Scheduler(SchedulerInterface):
+         if not request.is_am_background and request.am_cache_key is None:
+             return
+         mono_ms, epoch_ms = self._am_now_ms()
++        request.am_queue_mono_ms = mono_ms
++        if request.am_cache_key is not None:
++            self.am_cache_registry.register_request(
++                request.am_cache_key,
++                request.am_role,
++                request.num_prompt_tokens,
++            )
++        lease_state, lease_valid = self._get_am_request_lease_status(request)
+         logger.info(
+             "AM request queued: request_id=%s role=%s cache_key=%s "
+-            "prefill_only=%s chunk_tokens=%s evictable=%s prompt_tokens=%s "
++            "lease_id=%s lease_state=%s lease_valid=%s "
++            "prefill_only=%s chunk_tokens=%s decode_overlap=%s "
++            "pause_on_foreground=%s evictable=%s prompt_tokens=%s "
+             "queue_mono_ms=%.3f queue_epoch_ms=%.3f",
+             request.request_id,
+             request.am_role,
+             request.am_cache_key,
++            request.am_lease_id,
++            lease_state,
++            lease_valid,
+             request.am_prefill_only,
+             request.am_chunk_tokens,
++            request.am_decode_overlap,
++            request.am_pause_on_foreground,
+             request.am_evictable,
+             request.num_prompt_tokens,
+             mono_ms,
+@@ -1918,7 +1999,8 @@ class Scheduler(SchedulerInterface):
+         logger.info(
+             "AM request scheduled: request_id=%s role=%s cache_key=%s "
+             "source=%s phase=%s num_new_tokens=%s computed_tokens=%s "
+-            "prompt_tokens=%s",
++            "prompt_tokens=%s chunk_tokens=%s decode_overlap=%s "
++            "pause_on_foreground=%s",
+             request.request_id,
+             request.am_role,
+             request.am_cache_key,
+@@ -1927,6 +2009,9 @@ class Scheduler(SchedulerInterface):
+             num_new_tokens,
+             request.num_computed_tokens,
+             request.num_prompt_tokens,
++            request.am_chunk_tokens,
++            request.am_decode_overlap,
++            request.am_pause_on_foreground,
+         )
+ 
+     def _log_am_request_paused(self, request: Request, reason: str) -> None:
+@@ -1941,6 +2026,7 @@ class Scheduler(SchedulerInterface):
+         logger.info(
+             "AM request paused: request_id=%s role=%s cache_key=%s "
+             "reason=%s phase=%s computed_tokens=%s prompt_tokens=%s "
++            "chunk_tokens=%s decode_overlap=%s pause_on_foreground=%s "
+             "pause_mono_ms=%.3f pause_epoch_ms=%.3f",
+             request.request_id,
+             request.am_role,
+@@ -1949,10 +2035,53 @@ class Scheduler(SchedulerInterface):
+             phase,
+             request.num_computed_tokens,
+             request.num_prompt_tokens,
++            request.am_chunk_tokens,
++            request.am_decode_overlap,
++            request.am_pause_on_foreground,
+             mono_ms,
+             epoch_ms,
+         )
+ 
++    def _pin_am_background_encoder_input(
++        self, request: Request, input_id: int
++    ) -> None:
++        if not request.is_am_background:
++            return
++        self.encoder_cache_manager.protect(request, input_id)
++        mm_feature = request.mm_features[input_id]
++        if request.am_cache_key is not None:
++            self._am_encoder_hash_to_cache_key[mm_feature.identifier] = (
++                request.am_cache_key
++            )
++            self._am_cache_key_to_encoder_hash[request.am_cache_key] = (
++                mm_feature.identifier
++            )
++        stats = self.encoder_cache_manager.get_stats()
++        logger.info(
++            "AM encoder cache protected: request_id=%s cache_key=%s input_id=%s "
++            "mm_hash=%s stats=%s",
++            request.request_id,
++            request.am_cache_key,
++            input_id,
++            mm_feature.identifier,
++            json.dumps(stats, separators=(",", ":")),
++        )
++
++    def _mark_am_encoder_cache_evictions(self, mm_hashes: list[str]) -> None:
++        for mm_hash in mm_hashes:
++            cache_key = self._am_encoder_hash_to_cache_key.pop(mm_hash, None)
++            if cache_key is None:
++                continue
++            self.am_cache_registry.mark_encoder_evicted(cache_key)
++            stats = self.encoder_cache_manager.get_stats()
++            logger.info(
++                "AM encoder cache protected evicted: cache_key=%s mm_hash=%s "
++                "stats=%s",
++                cache_key,
++                mm_hash,
++                json.dumps(stats, separators=(",", ":")),
++            )
++
+     def _log_am_timeline_steps_done(
+         self,
+         scheduler_output: SchedulerOutput,
+@@ -1968,6 +2097,22 @@ class Scheduler(SchedulerInterface):
+             if sampled_token_ids and req_id in model_runner_output.req_id_to_index:
+                 req_index = model_runner_output.req_id_to_index[req_id]
+                 sampled_tokens = len(sampled_token_ids[req_index])
++            request = self.requests.get(req_id)
++            queue_mono_ms = (
++                request.am_queue_mono_ms if request is not None else None
++            )
++            engine_queue_to_first_token_ms = None
++            if sampled_tokens > 0 and queue_mono_ms is not None:
++                engine_queue_to_first_token_ms = done_mono_ms - queue_mono_ms
++            if (
++                sampled_tokens > 0
++                and event["cache_key"] is not None
++                and int(event["computed_after"]) >= int(event["prompt_tokens"])
++            ):
++                self.am_cache_registry.mark_ready(
++                    str(event["cache_key"]),
++                    int(event["prompt_tokens"]),
++                )
+             schedule_mono_ms = float(event["schedule_mono_ms"])
+             model_submit_mono_ms = event.get("model_submit_mono_ms")
+             if model_submit_mono_ms is None:
+@@ -1976,18 +2121,34 @@ class Scheduler(SchedulerInterface):
+             else:
+                 queue_to_submit_ms = float(model_submit_mono_ms) - schedule_mono_ms
+                 model_duration_ms = done_mono_ms - float(model_submit_mono_ms)
++            scheduled_encoder_inputs = (
++                scheduler_output.scheduled_encoder_inputs.get(req_id, [])
++            )
++            am_model_trace = model_runner_output.am_model_trace
++            runner_trace = (
++                json.dumps(am_model_trace, sort_keys=True, separators=(",", ":"))
++                if am_model_trace
++                else "{}"
++            )
+             logger.info(
+                 "AM timeline done: step_id=%s request_id=%s role=%s "
+-                "cache_key=%s source=%s phase=%s num_new_tokens=%s "
++                "cache_key=%s lease_id=%s lease_state=%s lease_valid=%s "
++                "source=%s phase=%s num_new_tokens=%s "
+                 "computed_before=%s computed_after=%s prompt_tokens=%s "
+-                "chunk_tokens=%s sampled_tokens=%s schedule_mono_ms=%.3f "
+-                "model_submit_mono_ms=%s done_mono_ms=%.3f "
++                "chunk_tokens=%s decode_overlap=%s pause_on_foreground=%s "
++                "sampled_tokens=%s "
++                "scheduled_encoder_inputs_count=%s scheduled_encoder_inputs=%s "
++                "schedule_mono_ms=%.3f model_submit_mono_ms=%s done_mono_ms=%.3f "
+                 "schedule_to_done_ms=%.3f queue_to_submit_ms=%s "
+-                "model_duration_ms=%s done_epoch_ms=%.3f",
++                "model_duration_ms=%s engine_queue_to_first_token_ms=%s "
++                "done_epoch_ms=%.3f runner_trace=%s",
+                 event["step_id"],
+                 req_id,
+                 event["role"],
+                 event["cache_key"],
++                event["lease_id"],
++                event["lease_state"],
++                event["lease_valid"],
+                 event["source"],
+                 event["phase"],
+                 event["num_new_tokens"],
+@@ -1995,14 +2156,20 @@ class Scheduler(SchedulerInterface):
+                 event["computed_after"],
+                 event["prompt_tokens"],
+                 event["chunk_tokens"],
++                event["decode_overlap"],
++                event.get("pause_on_foreground"),
+                 sampled_tokens,
++                len(scheduled_encoder_inputs),
++                json.dumps(scheduled_encoder_inputs, separators=(",", ":")),
+                 schedule_mono_ms,
+                 self._fmt_am_optional_ms(model_submit_mono_ms),
+                 done_mono_ms,
+                 done_mono_ms - schedule_mono_ms,
+                 self._fmt_am_optional_ms(queue_to_submit_ms),
+                 self._fmt_am_optional_ms(model_duration_ms),
++                self._fmt_am_optional_ms(engine_queue_to_first_token_ms),
+                 done_epoch_ms,
++                runner_trace,
+             )
+ 
+     @staticmethod
+@@ -2186,6 +2353,183 @@ class Scheduler(SchedulerInterface):
+         stale vision embeddings are not reused.
+         """
+         self.encoder_cache_manager.reset()
++        self._am_encoder_hash_to_cache_key.clear()
++        self._am_cache_key_to_encoder_hash.clear()
++        self._am_cache_leases.clear()
++
++    def get_am_cache_status(self, cache_key: str) -> dict[str, Any]:
++        status = self.am_cache_registry.get_status(cache_key)
++        status.update(self._get_am_encoder_status(cache_key))
++        return status
++
++    def _get_am_request_lease_status(self, request: Request) -> tuple[str, bool]:
++        lease_id = request.am_lease_id
++        if not lease_id:
++            return "none", False
++        now_ms = time.monotonic() * 1000
++        self._cleanup_am_cache_leases(now_ms)
++        lease = self._am_cache_leases.get(lease_id)
++        if lease is None:
++            return "missing_or_expired", False
++        if lease["cache_key"] != request.am_cache_key:
++            return "cache_key_mismatch", False
++        return "valid", True
++
++    def select_am_cache_candidate(
++        self,
++        candidates: list[dict[str, Any]],
++        lease_ttl_ms: int = 2000,
++        allow_encoder_restore: bool = True,
++        wait_restore_ms: int = 0,
++    ) -> dict[str, Any]:
++        """Select the first KV-ready AM cache candidate and lease it.
++
++        Candidate ordering is supplied by the agent. vLLM does not interpret
++        semantic coverage beyond echoing it in the response.
++        """
++        now_ms = time.monotonic() * 1000
++        self._cleanup_am_cache_leases(now_ms)
++
++        selected: dict[str, Any] | None = None
++        selected_index = -1
++        selected_coverage: Any = None
++        inspected: list[dict[str, Any]] = []
++
++        for index, candidate in enumerate(candidates):
++            cache_key = candidate.get("cache_key")
++            coverage = candidate.get("coverage")
++            if not isinstance(cache_key, str) or not cache_key:
++                inspected.append({
++                    "index": index,
++                    "cache_key": cache_key,
++                    "state": "invalid",
++                    "ready": False,
++                })
++                continue
++
++            status = self.get_am_cache_status(cache_key)
++            inspected.append({
++                "index": index,
++                "cache_key": cache_key,
++                "coverage": coverage,
++                "state": status["state"],
++                "ready": status["ready"],
++                "cached_tokens": status["cached_tokens"],
++                "prompt_tokens": status["prompt_tokens"],
++                "encoder_state": status["encoder_state"],
++                "encoder_mm_hash": status["encoder_mm_hash"],
++            })
++            if status["state"] != "ready":
++                continue
++
++            selected = status
++            selected_index = index
++            selected_coverage = coverage
++            break
++
++        if selected is None:
++            logger.info(
++                "AM cache select: selected=None reason=no_kv_ready_candidate "
++                "candidate_count=%s",
++                len(candidates),
++            )
++            return {
++                "selected_cache_key": None,
++                "selected_index": None,
++                "coverage": None,
++                "kv_state": None,
++                "encoder_state": None,
++                "encoder_mm_hash": None,
++                "restore_started": False,
++                "lease_id": None,
++                "lease_ttl_ms": lease_ttl_ms,
++                "reason": "no_kv_ready_candidate",
++                "inspected": inspected,
++            }
++
++        cache_key = str(selected["cache_key"])
++        lease_id = f"am-lease-{time.monotonic_ns()}"
++        expiry_ms = now_ms + max(0, lease_ttl_ms)
++        encoder_touched = self._touch_am_encoder_cache(cache_key)
++        self._am_cache_leases[lease_id] = {
++            "cache_key": cache_key,
++            "created_ms": now_ms,
++            "expires_ms": expiry_ms,
++            "selected_index": selected_index,
++            "coverage": selected_coverage,
++        }
++
++        logger.info(
++            "AM cache select: selected=%s selected_index=%s coverage=%s "
++            "kv_state=%s encoder_state=%s lease_id=%s ttl_ms=%s "
++            "encoder_touched=%s allow_encoder_restore=%s wait_restore_ms=%s",
++            cache_key,
++            selected_index,
++            selected_coverage,
++            selected["state"],
++            selected["encoder_state"],
++            lease_id,
++            lease_ttl_ms,
++            encoder_touched,
++            allow_encoder_restore,
++            wait_restore_ms,
++        )
++        return {
++            "selected_cache_key": cache_key,
++            "selected_index": selected_index,
++            "coverage": selected_coverage,
++            "kv_state": selected["state"],
++            "ready": selected["ready"],
++            "cached_tokens": selected["cached_tokens"],
++            "prompt_tokens": selected["prompt_tokens"],
++            "live_blocks": selected["live_blocks"],
++            "evicted_blocks": selected["evicted_blocks"],
++            "encoder_state": selected["encoder_state"],
++            "encoder_mm_hash": selected["encoder_mm_hash"],
++            "encoder_touched": encoder_touched,
++            "restore_started": False,
++            "lease_id": lease_id,
++            "lease_ttl_ms": lease_ttl_ms,
++            "lease_expires_mono_ms": expiry_ms,
++            "reason": "selected",
++            "inspected": inspected,
++        }
++
++    def _get_am_encoder_status(self, cache_key: str) -> dict[str, Any]:
++        mm_hash = self._am_cache_key_to_encoder_hash.get(cache_key)
++        if mm_hash is None:
++            return {
++                "encoder_state": "unknown",
++                "encoder_cache_tracked": False,
++                "encoder_mm_hash": None,
++            }
++        encoder_state = (
++            "gpu"
++            if self.encoder_cache_manager.has_cache_item(mm_hash)
++            else "missing"
++        )
++        return {
++            "encoder_state": encoder_state,
++            "encoder_cache_tracked": True,
++            "encoder_mm_hash": mm_hash,
++        }
++
++    def _touch_am_encoder_cache(self, cache_key: str) -> bool:
++        mm_hash = self._am_cache_key_to_encoder_hash.get(cache_key)
++        if mm_hash is None:
++            return False
++        return self.encoder_cache_manager.touch(mm_hash)
++
++    def _cleanup_am_cache_leases(self, now_ms: float | None = None) -> None:
++        if now_ms is None:
++            now_ms = time.monotonic() * 1000
++        expired = [
++            lease_id
++            for lease_id, lease in self._am_cache_leases.items()
++            if float(lease["expires_ms"]) <= now_ms
++        ]
++        for lease_id in expired:
++            self._am_cache_leases.pop(lease_id, None)
+ 
+     def make_stats(
+         self,
+diff --git a/vllm/v1/engine/async_llm.py b/vllm/v1/engine/async_llm.py
+index a9c42e78e..c3aa95dea 100644
+--- a/vllm/v1/engine/async_llm.py
++++ b/vllm/v1/engine/async_llm.py
+@@ -902,6 +902,20 @@ class AsyncLLM(EngineClient):
+     async def reset_encoder_cache(self) -> None:
+         await self.engine_core.reset_encoder_cache_async()
+ 
++    async def get_am_cache_status(self, cache_key: str) -> dict[str, Any]:
++        return await self.engine_core.get_am_cache_status_async(cache_key)
++
++    async def select_am_cache_candidate(
++        self,
++        candidates: list[dict[str, Any]],
++        lease_ttl_ms: int = 2000,
++        allow_encoder_restore: bool = True,
++        wait_restore_ms: int = 0,
++    ) -> dict[str, Any]:
++        return await self.engine_core.select_am_cache_candidate_async(
++            candidates, lease_ttl_ms, allow_encoder_restore, wait_restore_ms
++        )
++
+     async def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
+         await self.engine_core.sleep_async(level, mode)
+ 
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+index e12eabc6d..1e9c1bf1e 100644
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -624,6 +624,58 @@ class EngineCore:
+         # Reset the GPU model runner's encoder cache (physical storage)
+         self.model_executor.reset_encoder_cache()
+ 
++    def get_am_cache_status(self, cache_key: str) -> dict[str, Any]:
++        return self.scheduler.get_am_cache_status(cache_key)
++
++    def select_am_cache_candidate(
++        self,
++        candidates: list[dict[str, Any]],
++        lease_ttl_ms: int = 2000,
++        allow_encoder_restore: bool = True,
++        wait_restore_ms: int = 0,
++    ) -> dict[str, Any]:
++        response = self.scheduler.select_am_cache_candidate(
++            candidates, lease_ttl_ms, allow_encoder_restore, wait_restore_ms
++        )
++        mm_hash = response.get("encoder_mm_hash")
++        encoder_state = response.get("encoder_state")
++        if (
++            allow_encoder_restore
++            and response.get("selected_cache_key") is not None
++            and isinstance(mm_hash, str)
++            and mm_hash
++            and encoder_state != "gpu"
++        ):
++            try:
++                restore_results = self.model_executor.collective_rpc(
++                    "start_am_encoder_restore",
++                    args=(mm_hash,),
++                    timeout=2,
++                )
++                response["restore_results"] = restore_results
++                response["restore_started"] = any(
++                    isinstance(result, dict)
++                    and result.get("restore_started")
++                    for result in restore_results
++                )
++                states = [
++                    result.get("encoder_state")
++                    for result in restore_results
++                    if isinstance(result, dict)
++                ]
++                if response["restore_started"]:
++                    response["encoder_state"] = "restoring"
++                elif states:
++                    response["encoder_state"] = states[0]
++            except Exception as exc:
++                logger.warning(
++                    "AM cache select failed to start encoder restore for %s: %s",
++                    mm_hash,
++                    exc,
++                )
++                response["restore_error"] = str(exc)
++        return response
++
+     def _reset_caches(self, reset_running_requests=True) -> None:
+         self.reset_prefix_cache(reset_running_requests=reset_running_requests)
+         self.reset_mm_cache()
+diff --git a/vllm/v1/engine/core_client.py b/vllm/v1/engine/core_client.py
+index 4596824ec..d77d0c3da 100644
+--- a/vllm/v1/engine/core_client.py
++++ b/vllm/v1/engine/core_client.py
+@@ -153,6 +153,18 @@ class EngineCoreClient(ABC):
+     def reset_encoder_cache(self) -> None:
+         raise NotImplementedError
+ 
++    def get_am_cache_status(self, cache_key: str) -> dict[str, Any]:
++        raise NotImplementedError
++
++    def select_am_cache_candidate(
++        self,
++        candidates: list[dict[str, Any]],
++        lease_ttl_ms: int = 2000,
++        allow_encoder_restore: bool = True,
++        wait_restore_ms: int = 0,
++    ) -> dict[str, Any]:
++        raise NotImplementedError
++
+     def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
+         raise NotImplementedError
+ 
+@@ -230,6 +242,18 @@ class EngineCoreClient(ABC):
+     async def reset_encoder_cache_async(self) -> None:
+         raise NotImplementedError
+ 
++    async def get_am_cache_status_async(self, cache_key: str) -> dict[str, Any]:
++        raise NotImplementedError
++
++    async def select_am_cache_candidate_async(
++        self,
++        candidates: list[dict[str, Any]],
++        lease_ttl_ms: int = 2000,
++        allow_encoder_restore: bool = True,
++        wait_restore_ms: int = 0,
++    ) -> dict[str, Any]:
++        raise NotImplementedError
++
+     async def sleep_async(self, level: int = 1, mode: PauseMode = "abort") -> None:
+         raise NotImplementedError
+ 
+@@ -317,6 +341,20 @@ class InprocClient(EngineCoreClient):
+     def reset_encoder_cache(self) -> None:
+         self.engine_core.reset_encoder_cache()
+ 
++    def get_am_cache_status(self, cache_key: str) -> dict[str, Any]:
++        return self.engine_core.get_am_cache_status(cache_key)
++
++    def select_am_cache_candidate(
++        self,
++        candidates: list[dict[str, Any]],
++        lease_ttl_ms: int = 2000,
++        allow_encoder_restore: bool = True,
++        wait_restore_ms: int = 0,
++    ) -> dict[str, Any]:
++        return self.engine_core.select_am_cache_candidate(
++            candidates, lease_ttl_ms, allow_encoder_restore, wait_restore_ms
++        )
++
+     def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
+         if mode == "wait":
+             raise ValueError("'wait' pause mode is not supported in inproc-engine mode")
+@@ -869,6 +907,24 @@ class SyncMPClient(MPClient):
+     def reset_encoder_cache(self) -> None:
+         self.call_utility("reset_encoder_cache")
+ 
++    def get_am_cache_status(self, cache_key: str) -> dict[str, Any]:
++        return self.call_utility("get_am_cache_status", cache_key)
++
++    def select_am_cache_candidate(
++        self,
++        candidates: list[dict[str, Any]],
++        lease_ttl_ms: int = 2000,
++        allow_encoder_restore: bool = True,
++        wait_restore_ms: int = 0,
++    ) -> dict[str, Any]:
++        return self.call_utility(
++            "select_am_cache_candidate",
++            candidates,
++            lease_ttl_ms,
++            allow_encoder_restore,
++            wait_restore_ms,
++        )
++
+     def add_lora(self, lora_request: LoRARequest) -> bool:
+         return self.call_utility("add_lora", lora_request)
+ 
+@@ -1117,6 +1173,24 @@ class AsyncMPClient(MPClient):
+     async def reset_encoder_cache_async(self) -> None:
+         await self.call_utility_async("reset_encoder_cache")
+ 
++    async def get_am_cache_status_async(self, cache_key: str) -> dict[str, Any]:
++        return await self.call_utility_async("get_am_cache_status", cache_key)
++
++    async def select_am_cache_candidate_async(
++        self,
++        candidates: list[dict[str, Any]],
++        lease_ttl_ms: int = 2000,
++        allow_encoder_restore: bool = True,
++        wait_restore_ms: int = 0,
++    ) -> dict[str, Any]:
++        return await self.call_utility_async(
++            "select_am_cache_candidate",
++            candidates,
++            lease_ttl_ms,
++            allow_encoder_restore,
++            wait_restore_ms,
++        )
++
+     async def sleep_async(self, level: int = 1, mode: PauseMode = "abort") -> None:
+         await self.call_utility_async("sleep", level, mode)
+ 
+diff --git a/vllm/v1/metrics/stats.py b/vllm/v1/metrics/stats.py
+index 4a1e8b6f3..31b6c1169 100644
+--- a/vllm/v1/metrics/stats.py
++++ b/vllm/v1/metrics/stats.py
+@@ -214,6 +214,7 @@ class RequestStateStats:
+ 
+     # first token latency
+     first_token_latency: float = 0.0
++    engine_queue_to_first_token_latency: float = 0.0
+ 
+     # Track if this request is corrupted (NaNs in logits)
+     is_corrupted: bool = False
+@@ -363,7 +364,15 @@ class IterationStats:
+         ):
+             req_stats.is_corrupted = True
+ 
+-        # Process request-level engine core events
++        if is_prefilling:
++            req_stats.first_token_ts = engine_core_timestamp
++        else:
++            itl = engine_core_timestamp - req_stats.last_token_ts
++            self.inter_token_latencies_iter.append(itl)
++
++        # Process request-level engine core events. This is after
++        # first_token_ts is set so request-level queue-to-first-token latency
++        # can include scheduler waiting and background chunk interference.
+         if output.events is not None:
+             self.update_from_events(
+                 output.request_id,
+@@ -374,12 +383,10 @@ class IterationStats:
+                 lora_name,
+             )
+ 
+-        # Process the batch-level "new tokens" engine core event
+-        if is_prefilling:
+-            req_stats.first_token_ts = engine_core_timestamp
+-        else:
+-            itl = engine_core_timestamp - req_stats.last_token_ts
+-            self.inter_token_latencies_iter.append(itl)
++        if is_prefilling and req_stats.queued_ts > 0.0:
++            req_stats.engine_queue_to_first_token_latency = (
++                req_stats.first_token_ts - req_stats.queued_ts
++            )
+ 
+         req_stats.last_token_ts = engine_core_timestamp
+ 
+diff --git a/vllm/v1/outputs.py b/vllm/v1/outputs.py
+index 8eb58de4f..682ffee16 100644
+--- a/vllm/v1/outputs.py
++++ b/vllm/v1/outputs.py
+@@ -253,6 +253,10 @@ class ModelRunnerOutput:
+     # information related to cudagraph execution
+     cudagraph_stats: CUDAGraphStat | None = None
+ 
++    # Agent Memory model-runner timing/debug trace. This is populated only for
++    # instrumented AM requests to avoid overhead on normal serving paths.
++    am_model_trace: dict[str, object] | None = None
++
+ 
+ # ModelRunnerOutput wrapper for async scheduling.
+ class AsyncModelRunnerOutput(ABC):
+diff --git a/vllm/v1/request.py b/vllm/v1/request.py
+index 772c5fdaf..3a299c3ea 100644
+--- a/vllm/v1/request.py
++++ b/vllm/v1/request.py
+@@ -100,6 +100,7 @@ class Request:
+         extra_args = sampling_params.extra_args if sampling_params is not None else None
+         self.am_role = _parse_am_role(extra_args)
+         self.am_cache_key = _parse_optional_str(extra_args, "am_cache_key")
++        self.am_lease_id = _parse_optional_str(extra_args, "am_lease_id")
+         self.am_prefill_only = _parse_bool_arg(extra_args, "am_prefill_only", False)
+         self.am_chunk_tokens = _parse_optional_positive_int(
+             extra_args, "am_chunk_tokens"
+@@ -107,12 +108,19 @@ class Request:
+         self.am_deadline_ms = _parse_optional_nonnegative_int(
+             extra_args, "am_deadline_ms"
+         )
++        self.am_decode_overlap = _parse_bool_arg(
++            extra_args, "am_decode_overlap", False
++        )
++        self.am_pause_on_foreground = _parse_bool_arg(
++            extra_args, "am_pause_on_foreground", True
++        )
+         self.am_evictable = _parse_bool_arg(
+             extra_args,
+             "am_evictable",
+             self.am_role == AM_ROLE_BACKGROUND,
+         )
+         self.am_prefetch_state = "queued" if self.is_am_background else None
++        self.am_queue_mono_ms: float | None = None
+ 
+         if pooling_params is not None:
+             # Pooling models.
+diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runner.py
+index 98e1dab36..1142bb991 100644
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -6,7 +6,7 @@ import gc
+ import itertools
+ import threading
+ import time
+-from collections import defaultdict
++from collections import OrderedDict, defaultdict
+ from collections.abc import Iterable, Iterator, Sequence
+ from contextlib import contextmanager
+ from copy import copy, deepcopy
+@@ -381,11 +381,99 @@ class ExecuteModelState(NamedTuple):
+     ec_connector_output: ECConnectorOutput | None
+     cudagraph_stats: CUDAGraphStat | None
+     slot_mappings: dict[str, torch.Tensor] | list[dict[str, torch.Tensor]] | None
++    am_model_trace: dict[str, Any] | None
++
++
++@dataclass
++class AMEncoderCPUCacheEntry:
++    cpu_tensor: torch.Tensor
++    num_bytes: int
++    offload_event: torch.cuda.Event | None = None
++    restore_tensor: torch.Tensor | None = None
++    restore_event: torch.cuda.Event | None = None
+ 
+ 
+ class GPUModelRunner(
+     LoRAModelRunnerMixin, KVConnectorModelRunnerMixin, ECConnectorModelRunnerMixin
+ ):
++    @staticmethod
++    def _new_am_model_trace(
++        scheduler_output: "SchedulerOutput",
++    ) -> dict[str, Any] | None:
++        if not scheduler_output.am_timeline_events:
++            return None
++        scheduled_encoder_inputs = scheduler_output.scheduled_encoder_inputs
++        return {
++            "runner_execute_start_mono_ms": time.monotonic() * 1000,
++            "runner_total_scheduled_tokens": (
++                scheduler_output.total_num_scheduled_tokens
++            ),
++            "runner_num_reqs": len(scheduler_output.num_scheduled_tokens),
++            "runner_scheduled_encoder_reqs": len(scheduled_encoder_inputs),
++            "runner_scheduled_encoder_inputs": sum(
++                len(input_ids) for input_ids in scheduled_encoder_inputs.values()
++            ),
++            "runner_scheduled_encoder_inputs_by_req": {
++                req_id: list(input_ids)
++                for req_id, input_ids in scheduled_encoder_inputs.items()
++            },
++        }
++
++    @staticmethod
++    def _am_trace_add_cpu_ms(
++        am_trace: dict[str, Any] | None,
++        key: str,
++        start_mono_ms: float,
++    ) -> None:
++        if am_trace is None:
++            return
++        elapsed_ms = time.monotonic() * 1000 - start_mono_ms
++        am_trace[key] = float(am_trace.get(key, 0.0)) + elapsed_ms
++
++    @staticmethod
++    def _am_trace_cuda_start(
++        am_trace: dict[str, Any] | None,
++        key: str,
++    ) -> tuple[str, torch.cuda.Event, torch.cuda.Event] | None:
++        if am_trace is None or not torch.cuda.is_available():
++            return None
++        start_event = torch.cuda.Event(enable_timing=True)
++        end_event = torch.cuda.Event(enable_timing=True)
++        start_event.record()
++        return key, start_event, end_event
++
++    @staticmethod
++    def _am_trace_cuda_end(
++        am_trace: dict[str, Any] | None,
++        event_pair: tuple[str, torch.cuda.Event, torch.cuda.Event] | None,
++    ) -> None:
++        if am_trace is None or event_pair is None:
++            return
++        _, _, end_event = event_pair
++        end_event.record()
++        am_trace.setdefault("_cuda_event_pairs", []).append(event_pair)
++
++    @staticmethod
++    def _finalize_am_model_trace(
++        am_trace: dict[str, Any] | None,
++    ) -> dict[str, Any] | None:
++        if am_trace is None:
++            return None
++        for key, start_event, end_event in am_trace.pop(
++            "_cuda_event_pairs", []
++        ):
++            end_event.synchronize()
++            am_trace[key] = float(am_trace.get(key, 0.0)) + float(
++                start_event.elapsed_time(end_event)
++            )
++        am_trace["runner_execute_end_mono_ms"] = time.monotonic() * 1000
++        start_ms = am_trace.get("runner_execute_start_mono_ms")
++        if start_ms is not None:
++            am_trace["runner_execute_wall_ms"] = (
++                am_trace["runner_execute_end_mono_ms"] - float(start_ms)
++            )
++        return am_trace
++
+     def __init__(
+         self,
+         vllm_config: VllmConfig,
+@@ -496,6 +584,15 @@ class GPUModelRunner(
+ 
+         # mm_hash ->  encoder_output
+         self.encoder_cache: dict[str, torch.Tensor] = {}
++        self.encoder_cpu_cache: OrderedDict[
++            str, AMEncoderCPUCacheEntry
++        ] = OrderedDict()
++        self.encoder_cpu_cache_bytes = 0
++        self.encoder_cpu_cache_capacity_bytes = int(
++            envs.VLLM_AM_ENCODER_CPU_CACHE_GB * (1024**3)
++        )
++        self.encoder_cpu_offload_stream: torch.cuda.Stream | None = None
++        self.encoder_cpu_restore_stream: torch.cuda.Stream | None = None
+         self.late_interaction_runner = LateInteractionRunner()
+ 
+         self.use_aux_hidden_state_outputs = False
+@@ -846,6 +943,7 @@ class GPUModelRunner(
+         stale embeddings computed with old weights are not reused.
+         """
+         self.encoder_cache.clear()
++        self._clear_encoder_cpu_cache()
+         self.late_interaction_runner.clear()
+ 
+     @torch.inference_mode()
+@@ -2469,6 +2567,7 @@ class GPUModelRunner(
+     def _batch_mm_inputs_from_scheduler(
+         self,
+         scheduler_output: "SchedulerOutput",
++        am_trace: dict[str, Any] | None = None,
+     ) -> tuple[
+         list[str],
+         list[tuple[str, MultiModalKwargsItem]],
+@@ -2503,21 +2602,256 @@ class GPUModelRunner(
+                 if mm_feature.data is None:
+                     continue
+ 
++                if self._restore_encoder_cache_from_cpu(
++                    mm_feature.identifier, am_trace
++                ):
++                    continue
++
+                 mm_hashes.append(mm_feature.identifier)
+                 mm_kwargs.append((mm_feature.modality, mm_feature.data))
+                 mm_lora_refs.append((req_id, mm_feature.mm_position))
+ 
+         return mm_hashes, mm_kwargs, mm_lora_refs
+ 
++    def _is_am_background_req(self, req_id: str) -> bool:
++        req_state = self.requests.get(req_id)
++        if req_state is None or req_state.sampling_params is None:
++            return False
++        extra_args = req_state.sampling_params.extra_args or {}
++        return extra_args.get("am_role") == "background"
++
++    @staticmethod
++    def _tensor_nbytes(tensor: torch.Tensor) -> int:
++        return tensor.numel() * tensor.element_size()
++
++    def _ensure_encoder_cpu_streams(self) -> None:
++        if self.encoder_cpu_offload_stream is None:
++            self.encoder_cpu_offload_stream = torch.cuda.Stream(device=self.device)
++        if self.encoder_cpu_restore_stream is None:
++            self.encoder_cpu_restore_stream = torch.cuda.Stream(device=self.device)
++
++    def _clear_encoder_cpu_cache(self) -> None:
++        if self.encoder_cpu_offload_stream is not None:
++            self.encoder_cpu_offload_stream.synchronize()
++        if self.encoder_cpu_restore_stream is not None:
++            self.encoder_cpu_restore_stream.synchronize()
++        self.encoder_cpu_cache.clear()
++        self.encoder_cpu_cache_bytes = 0
++
++    @staticmethod
++    def _encoder_cpu_entry_pending(entry: AMEncoderCPUCacheEntry) -> bool:
++        if entry.offload_event is not None and not entry.offload_event.query():
++            return True
++        if entry.restore_event is not None and not entry.restore_event.query():
++            return True
++        return False
++
++    @staticmethod
++    def _refresh_encoder_cpu_entry(entry: AMEncoderCPUCacheEntry) -> None:
++        # Keep completed restore tensors until they are consumed by
++        # _restore_encoder_cache_from_cpu(). A select-triggered restore may
++        # finish before the foreground request reaches the runner.
++        return
++
++    def _trace_am_counter(
++        self,
++        am_trace: dict[str, Any] | None,
++        key: str,
++        value: float | int,
++    ) -> None:
++        if am_trace is None:
++            return
++        am_trace[key] = am_trace.get(key, 0) + value
++
++    def _trace_am_list(
++        self,
++        am_trace: dict[str, Any] | None,
++        key: str,
++        value: str,
++    ) -> None:
++        if am_trace is None:
++            return
++        values = am_trace.setdefault(key, [])
++        values.append(value)
++
++    def _offload_encoder_cache_to_cpu(
++        self,
++        mm_hash: str,
++        output: torch.Tensor,
++        am_trace: dict[str, Any] | None = None,
++    ) -> None:
++        if self.encoder_cpu_cache_capacity_bytes <= 0:
++            return
++
++        offload_start_ms = time.monotonic() * 1000
++        old = self.encoder_cpu_cache.pop(mm_hash, None)
++        if old is not None:
++            if self._encoder_cpu_entry_pending(old):
++                if old.offload_event is not None:
++                    old.offload_event.synchronize()
++                if old.restore_event is not None:
++                    old.restore_event.synchronize()
++            self.encoder_cpu_cache_bytes -= old.num_bytes
++
++        self._ensure_encoder_cpu_streams()
++        assert self.encoder_cpu_offload_stream is not None
++
++        item_bytes = self._tensor_nbytes(output)
++        cpu_output = torch.empty(
++            output.shape,
++            dtype=output.dtype,
++            device="cpu",
++            pin_memory=True,
++        )
++        offload_event = torch.cuda.Event()
++        current_stream = torch.cuda.current_stream(device=self.device)
++        with torch.cuda.stream(self.encoder_cpu_offload_stream):
++            self.encoder_cpu_offload_stream.wait_stream(current_stream)
++            cpu_output.copy_(output.detach(), non_blocking=True)
++            offload_event.record(self.encoder_cpu_offload_stream)
++
++        self.encoder_cpu_cache[mm_hash] = AMEncoderCPUCacheEntry(
++            cpu_tensor=cpu_output,
++            num_bytes=item_bytes,
++            offload_event=offload_event,
++        )
++        self.encoder_cpu_cache_bytes += item_bytes
++
++        while self.encoder_cpu_cache_bytes > self.encoder_cpu_cache_capacity_bytes:
++            evicted_item: tuple[str, AMEncoderCPUCacheEntry] | None = None
++            for candidate_hash, candidate in self.encoder_cpu_cache.items():
++                self._refresh_encoder_cpu_entry(candidate)
++                if candidate_hash == mm_hash:
++                    continue
++                if self._encoder_cpu_entry_pending(candidate):
++                    continue
++                evicted_item = (candidate_hash, candidate)
++                break
++            if evicted_item is None:
++                self._trace_am_counter(
++                    am_trace, "encoder_cpu_offload_over_capacity_count", 1
++                )
++                break
++            evicted_hash, evicted = evicted_item
++            del self.encoder_cpu_cache[evicted_hash]
++            self.encoder_cpu_cache_bytes -= evicted.num_bytes
++            self._trace_am_list(
++                am_trace, "encoder_cpu_offload_evicted_hashes", evicted_hash
++            )
++
++        self._trace_am_counter(am_trace, "encoder_cpu_offload_count", 1)
++        self._trace_am_counter(am_trace, "encoder_cpu_offload_async_count", 1)
++        self._trace_am_counter(am_trace, "encoder_cpu_offload_bytes", item_bytes)
++        self._am_trace_add_cpu_ms(
++            am_trace, "encoder_cpu_offload_cpu_ms", offload_start_ms
++        )
++
++    def _submit_encoder_cache_restore_from_cpu(
++        self,
++        mm_hash: str,
++        am_trace: dict[str, Any] | None = None,
++    ) -> tuple[bool, bool]:
++        if mm_hash in self.encoder_cache:
++            return True, False
++        entry = self.encoder_cpu_cache.get(mm_hash)
++        if entry is None:
++            return False, False
++
++        self.encoder_cpu_cache.move_to_end(mm_hash)
++        self._refresh_encoder_cpu_entry(entry)
++        self._ensure_encoder_cpu_streams()
++        assert self.encoder_cpu_restore_stream is not None
++
++        restore_started = False
++        if entry.restore_tensor is None:
++            entry.restore_tensor = torch.empty_like(entry.cpu_tensor, device=self.device)
++            entry.restore_event = torch.cuda.Event()
++            with torch.cuda.stream(self.encoder_cpu_restore_stream):
++                if entry.offload_event is not None:
++                    self.encoder_cpu_restore_stream.wait_event(entry.offload_event)
++                entry.restore_tensor.copy_(entry.cpu_tensor, non_blocking=True)
++                entry.restore_event.record(self.encoder_cpu_restore_stream)
++            self._trace_am_counter(am_trace, "encoder_cpu_restore_async_count", 1)
++            restore_started = True
++        return True, restore_started
++
++    def start_am_encoder_restore(self, mm_hash: str) -> dict[str, Any]:
++        """Submit an async CPU->GPU restore for an AM encoder cache item.
++
++        This is intentionally non-blocking: it does not wait for the copy and
++        does not install the pending tensor in encoder_cache. The foreground
++        request will wait on the recorded CUDA event when it actually consumes
++        the encoder output.
++        """
++        restore_start_ms = time.monotonic() * 1000
++        available, restore_started = self._submit_encoder_cache_restore_from_cpu(
++            mm_hash
++        )
++        entry = self.encoder_cpu_cache.get(mm_hash)
++        state = "missing"
++        if mm_hash in self.encoder_cache:
++            state = "gpu"
++        elif entry is not None:
++            if entry.restore_event is not None and not entry.restore_event.query():
++                state = "restoring"
++            elif entry.restore_tensor is not None:
++                state = "restored"
++            else:
++                state = "cpu"
++        return {
++            "mm_hash": mm_hash,
++            "available": available,
++            "restore_started": restore_started,
++            "encoder_state": state,
++            "cpu_cache_bytes": self.encoder_cpu_cache_bytes,
++            "cpu_ms": time.monotonic() * 1000 - restore_start_ms,
++        }
++
++    def _restore_encoder_cache_from_cpu(
++        self,
++        mm_hash: str,
++        am_trace: dict[str, Any] | None = None,
++    ) -> bool:
++        restore_start_ms = time.monotonic() * 1000
++        available, _ = self._submit_encoder_cache_restore_from_cpu(
++            mm_hash, am_trace
++        )
++        if not available:
++            return False
++        if mm_hash in self.encoder_cache:
++            return True
++
++        entry = self.encoder_cpu_cache[mm_hash]
++        if entry.restore_event is not None:
++            torch.cuda.current_stream(device=self.device).wait_event(entry.restore_event)
++        self.encoder_cache[mm_hash] = entry.restore_tensor
++        if entry.restore_event is None or entry.restore_event.query():
++            entry.restore_tensor = None
++        self._trace_am_counter(am_trace, "encoder_cpu_restore_count", 1)
++        self._trace_am_counter(
++            am_trace, "encoder_cpu_restore_bytes", entry.num_bytes
++        )
++        self._trace_am_list(am_trace, "encoder_cpu_restore_hashes", mm_hash)
++        self._am_trace_add_cpu_ms(
++            am_trace, "encoder_cpu_restore_cpu_ms", restore_start_ms
++        )
++        return True
++
+     def _execute_mm_encoder(
+-        self, scheduler_output: "SchedulerOutput"
++        self,
++        scheduler_output: "SchedulerOutput",
++        am_trace: dict[str, Any] | None = None,
+     ) -> list[torch.Tensor]:
++        execute_cpu_start_ms = time.monotonic() * 1000
+         mm_hashes, mm_kwargs, mm_lora_refs = self._batch_mm_inputs_from_scheduler(
+-            scheduler_output
++            scheduler_output, am_trace
+         )
+ 
+         if not mm_kwargs:
+             return []
++        if am_trace is not None:
++            am_trace["mm_encoder_items"] = len(mm_kwargs)
++            am_trace["mm_encoder_hashes"] = list(mm_hashes)
+ 
+         should_time = bool(
+             self.observability_config
+@@ -2628,9 +2962,18 @@ class GPUModelRunner(
+                             )
+                         )
+ 
++                        cuda_pair = self._am_trace_cuda_start(
++                            am_trace, "mm_encoder_cuda_ms"
++                        )
++                        embed_cpu_start_ms = time.monotonic() * 1000
+                         micro_batch_outputs = model.embed_multimodal(
+                             **micro_batch_mm_inputs
+                         )
++                        self._am_trace_cuda_end(am_trace, cuda_pair)
++                        self._am_trace_add_cpu_ms(
++                            am_trace, "mm_encoder_embed_call_cpu_ms",
++                            embed_cpu_start_ms,
++                        )
+ 
+                         batch_outputs_lst.extend(micro_batch_outputs)
+ 
+@@ -2647,7 +2990,17 @@ class GPUModelRunner(
+                 with self.timed_encoder_operation(
+                     should_time, mm_lora_refs, current_item_idx, num_items
+                 ):
++                    cuda_pair = self._am_trace_cuda_start(
++                        am_trace, "mm_encoder_cuda_ms"
++                    )
++                    embed_cpu_start_ms = time.monotonic() * 1000
+                     batch_outputs = model.embed_multimodal(**mm_kwargs_batch)
++                    self._am_trace_cuda_end(am_trace, cuda_pair)
++                    self._am_trace_add_cpu_ms(
++                        am_trace,
++                        "mm_encoder_embed_call_cpu_ms",
++                        embed_cpu_start_ms,
++                    )
+ 
+             sanity_check_mm_encoder_outputs(batch_outputs, expected_num_items=num_items)
+             encoder_outputs.extend(batch_outputs)
+@@ -2655,17 +3008,28 @@ class GPUModelRunner(
+             current_item_idx += num_items
+ 
+         # Cache the encoder outputs by mm_hash
++        am_background_hashes = {
++            mm_hash
++            for mm_hash, (req_id, _) in zip(mm_hashes, mm_lora_refs)
++            if self._is_am_background_req(req_id)
++        }
+         for mm_hash, output in zip(mm_hashes, encoder_outputs):
+             self.encoder_cache[mm_hash] = output
++            if mm_hash in am_background_hashes:
++                self._offload_encoder_cache_to_cpu(mm_hash, output, am_trace)
+             logger.debug("Finish execute for mm hash %s", mm_hash)
+             self.maybe_save_ec_to_connector(self.encoder_cache, mm_hash)
+ 
++        self._am_trace_add_cpu_ms(
++            am_trace, "mm_encoder_total_call_cpu_ms", execute_cpu_start_ms
++        )
+         return encoder_outputs
+ 
+     def _gather_mm_embeddings(
+         self,
+         scheduler_output: "SchedulerOutput",
+         shift_computed_tokens: int = 0,
++        am_trace: dict[str, Any] | None = None,
+     ) -> tuple[list[torch.Tensor], torch.Tensor]:
+         total_num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
+ 
+@@ -2722,6 +3086,10 @@ class GPUModelRunner(
+ 
+                 mm_hash = mm_feature.identifier
+                 encoder_output = self.encoder_cache.get(mm_hash, None)
++                if encoder_output is None and self._restore_encoder_cache_from_cpu(
++                    mm_hash, am_trace
++                ):
++                    encoder_output = self.encoder_cache.get(mm_hash, None)
+                 assert encoder_output is not None, f"Encoder cache miss for {mm_hash}."
+ 
+                 if (is_embed := pos_info.is_embed) is not None:
+@@ -2972,6 +3340,7 @@ class GPUModelRunner(
+         scheduler_output: "SchedulerOutput",
+         num_input_tokens: int,  # Padded
+         intermediate_tensors: IntermediateTensors | None = None,
++        am_trace: dict[str, Any] | None = None,
+     ) -> tuple[
+         torch.Tensor | None,
+         torch.Tensor | None,
+@@ -2994,20 +3363,42 @@ class GPUModelRunner(
+                 scheduler_output,
+                 encoder_cache=self.encoder_cache,
+             ) as ec_connector_output:
+-                self._execute_mm_encoder(scheduler_output)
+-                mm_embeds, is_mm_embed = self._gather_mm_embeddings(scheduler_output)
++                self._execute_mm_encoder(scheduler_output, am_trace)
++                gather_cpu_start_ms = time.monotonic() * 1000
++                mm_embeds, is_mm_embed = self._gather_mm_embeddings(
++                    scheduler_output, am_trace=am_trace
++                )
++                self._am_trace_add_cpu_ms(
++                    am_trace, "mm_gather_embeddings_cpu_ms", gather_cpu_start_ms
++                )
+ 
+             # NOTE(woosuk): To unify token ids and soft tokens (vision
+             # embeddings), we always use embeddings (rather than token ids)
+             # as input to the multimodal model, even when the input is text.
++            embed_input_cpu_start_ms = time.monotonic() * 1000
++            cuda_pair = self._am_trace_cuda_start(
++                am_trace, "embed_input_ids_cuda_ms"
++            )
+             inputs_embeds_scheduled = self.model.embed_input_ids(
+                 self.input_ids.gpu[:num_scheduled_tokens],
+                 multimodal_embeddings=mm_embeds,
+                 is_multimodal=is_mm_embed,
+             )
++            self._am_trace_cuda_end(am_trace, cuda_pair)
++            self._am_trace_add_cpu_ms(
++                am_trace, "embed_input_ids_call_cpu_ms", embed_input_cpu_start_ms
++            )
+ 
+             # TODO(woosuk): Avoid the copy. Optimize.
++            copy_cpu_start_ms = time.monotonic() * 1000
++            cuda_pair = self._am_trace_cuda_start(
++                am_trace, "inputs_embeds_copy_cuda_ms"
++            )
+             self.inputs_embeds.gpu[:num_scheduled_tokens].copy_(inputs_embeds_scheduled)
++            self._am_trace_cuda_end(am_trace, cuda_pair)
++            self._am_trace_add_cpu_ms(
++                am_trace, "inputs_embeds_copy_call_cpu_ms", copy_cpu_start_ms
++            )
+ 
+             input_ids, inputs_embeds = self._prepare_mm_inputs(num_input_tokens)
+             model_kwargs = {
+@@ -3574,21 +3965,29 @@ class GPUModelRunner(
+                 scheduler_output.preempted_req_ids
+             )
+ 
++        am_trace = self._new_am_model_trace(scheduler_output)
+         num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
++        preprocess_cpu_start_ms = time.monotonic() * 1000
+         with (
+             record_function_or_nullcontext("gpu_model_runner: preprocess"),
+             self.synchronize_input_prep(),
+         ):
+             # Update persistent batch states.
++            update_states_cpu_start_ms = time.monotonic() * 1000
+             self._update_states(scheduler_output)
++            self._am_trace_add_cpu_ms(
++                am_trace, "update_states_cpu_ms", update_states_cpu_start_ms
++            )
+ 
+             if has_ec_transfer() and not get_ec_transfer().is_consumer:
+                 with self.maybe_get_ec_connector_output(
+                     scheduler_output,
+                     encoder_cache=self.encoder_cache,
+                 ) as ec_connector_output:
+-                    self._execute_mm_encoder(scheduler_output)
+-                    return make_empty_encoder_model_runner_output(scheduler_output)
++                    self._execute_mm_encoder(scheduler_output, am_trace)
++                    output = make_empty_encoder_model_runner_output(scheduler_output)
++                    output.am_model_trace = self._finalize_am_model_trace(am_trace)
++                    return output
+ 
+             if not num_scheduled_tokens:
+                 if (
+@@ -3605,8 +4004,15 @@ class GPUModelRunner(
+                     self._dummy_run(1)
+                 if not has_kv_transfer_group():
+                     # Return empty ModelRunnerOutput if no work to do.
+-                    return EMPTY_MODEL_RUNNER_OUTPUT
+-                return self.kv_connector_no_forward(scheduler_output, self.vllm_config)
++                    output = copy(EMPTY_MODEL_RUNNER_OUTPUT)
++                    output.am_model_trace = self._finalize_am_model_trace(am_trace)
++                    return output
++                output = self.kv_connector_no_forward(
++                    scheduler_output, self.vllm_config
++                )
++                if isinstance(output, ModelRunnerOutput):
++                    output.am_model_trace = self._finalize_am_model_trace(am_trace)
++                return output
+ 
+             if self.cache_config.kv_sharing_fast_prefill:
+                 assert not self.num_prompt_logprobs, (
+@@ -3622,10 +4028,14 @@ class GPUModelRunner(
+             max_num_scheduled_tokens = int(num_scheduled_tokens_np.max())
+             num_tokens_unpadded = scheduler_output.total_num_scheduled_tokens
+ 
++            prepare_inputs_cpu_start_ms = time.monotonic() * 1000
+             logits_indices, spec_decode_metadata = self._prepare_inputs(
+                 scheduler_output,
+                 num_scheduled_tokens_np,
+             )
++            self._am_trace_add_cpu_ms(
++                am_trace, "prepare_inputs_cpu_ms", prepare_inputs_cpu_start_ms
++            )
+ 
+             cascade_attn_prefix_lens = None
+             # Disable cascade attention when using microbatching (DBO)
+@@ -3637,6 +4047,7 @@ class GPUModelRunner(
+                     scheduler_output.num_common_prefix_blocks,
+                 )
+ 
++            batch_plan_cpu_start_ms = time.monotonic() * 1000
+             (
+                 cudagraph_mode,
+                 batch_desc,
+@@ -3651,6 +4062,15 @@ class GPUModelRunner(
+                 use_cascade_attn=cascade_attn_prefix_lens is not None,
+                 num_encoder_reqs=len(scheduler_output.scheduled_encoder_inputs),
+             )
++            self._am_trace_add_cpu_ms(
++                am_trace, "batch_plan_cpu_ms", batch_plan_cpu_start_ms
++            )
++            if am_trace is not None:
++                am_trace["runner_cudagraph_mode"] = str(cudagraph_mode)
++                am_trace["runner_batch_tokens_padded"] = batch_desc.num_tokens
++                am_trace["runner_batch_reqs_padded"] = batch_desc.num_reqs
++                am_trace["runner_should_ubatch"] = bool(should_ubatch)
++                am_trace["runner_max_scheduled_tokens"] = max_num_scheduled_tokens
+ 
+             logger.debug(
+                 "Running batch with cudagraph_mode: %s, batch_descriptor: %s, "
+@@ -3719,6 +4139,7 @@ class GPUModelRunner(
+                 ubatch_slices=ubatch_slices_padded,
+             )
+ 
++            attention_metadata_cpu_start_ms = time.monotonic() * 1000
+             attn_metadata, spec_decode_common_attn_metadata = (
+                 self._build_attention_metadata(
+                     num_tokens=num_tokens_unpadded,
+@@ -3734,7 +4155,13 @@ class GPUModelRunner(
+                     slot_mappings=slot_mappings_by_group,
+                 )
+             )
++            self._am_trace_add_cpu_ms(
++                am_trace,
++                "attention_metadata_cpu_ms",
++                attention_metadata_cpu_start_ms,
++            )
+ 
++            inner_preprocess_cpu_start_ms = time.monotonic() * 1000
+             (
+                 input_ids,
+                 inputs_embeds,
+@@ -3743,9 +4170,19 @@ class GPUModelRunner(
+                 model_kwargs,
+                 ec_connector_output,
+             ) = self._preprocess(
+-                scheduler_output, num_tokens_padded, intermediate_tensors
++                scheduler_output,
++                num_tokens_padded,
++                intermediate_tensors,
++                am_trace,
++            )
++            self._am_trace_add_cpu_ms(
++                am_trace, "inner_preprocess_cpu_ms", inner_preprocess_cpu_start_ms
+             )
+ 
++        self._am_trace_add_cpu_ms(
++            am_trace, "preprocess_total_cpu_ms", preprocess_cpu_start_ms
++        )
++
+         # Set cudagraph mode to none if calc_kv_scales is true.
+         # KV scales calculation involves dynamic operations that are incompatible
+         # with CUDA graph capture.
+@@ -3784,6 +4221,8 @@ class GPUModelRunner(
+                 defer_finalize=defer_kv_connector_finalize,
+             ) as kv_connector_output,
+         ):
++            forward_cpu_start_ms = time.monotonic() * 1000
++            cuda_pair = self._am_trace_cuda_start(am_trace, "forward_cuda_ms")
+             model_output = self._model_forward(
+                 input_ids=input_ids,
+                 positions=positions,
+@@ -3791,7 +4230,12 @@ class GPUModelRunner(
+                 inputs_embeds=inputs_embeds,
+                 **model_kwargs,
+             )
++            self._am_trace_cuda_end(am_trace, cuda_pair)
++            self._am_trace_add_cpu_ms(
++                am_trace, "forward_call_cpu_ms", forward_cpu_start_ms
++            )
+ 
++        postprocess_cpu_start_ms = time.monotonic() * 1000
+         with record_function_or_nullcontext("gpu_model_runner: postprocess"):
+             if self.use_aux_hidden_state_outputs:
+                 # True when EAGLE 3 is used.
+@@ -3812,15 +4256,26 @@ class GPUModelRunner(
+ 
+                 if self.is_pooling_model:
+                     # Return the pooling output.
+-                    return self._pool(
++                    output = self._pool(
+                         hidden_states,
+                         num_scheduled_tokens,
+                         num_scheduled_tokens_np,
+                         kv_connector_output,
+                     )
++                    if isinstance(output, ModelRunnerOutput):
++                        output.am_model_trace = self._finalize_am_model_trace(
++                            am_trace
++                        )
++                    return output
+ 
+                 sample_hidden_states = hidden_states[logits_indices]
++                logits_cpu_start_ms = time.monotonic() * 1000
++                cuda_pair = self._am_trace_cuda_start(am_trace, "logits_cuda_ms")
+                 logits = self.model.compute_logits(sample_hidden_states)
++                self._am_trace_cuda_end(am_trace, cuda_pair)
++                self._am_trace_add_cpu_ms(
++                    am_trace, "logits_call_cpu_ms", logits_cpu_start_ms
++                )
+             else:
+                 # Rare case.
+                 assert not self.is_pooling_model
+@@ -3839,7 +4294,13 @@ class GPUModelRunner(
+                     )
+                     logits = None
+                 else:
++                    logits_cpu_start_ms = time.monotonic() * 1000
++                    cuda_pair = self._am_trace_cuda_start(am_trace, "logits_cuda_ms")
+                     logits = self.model.compute_logits(sample_hidden_states)
++                    self._am_trace_cuda_end(am_trace, cuda_pair)
++                    self._am_trace_add_cpu_ms(
++                        am_trace, "logits_call_cpu_ms", logits_cpu_start_ms
++                    )
+ 
+                 model_output_broadcast_data: dict[str, Any] = {}
+                 if logits is not None:
+@@ -3862,8 +4323,12 @@ class GPUModelRunner(
+             ec_connector_output,
+             cudagraph_stats,
+             slot_mappings,
++            am_trace,
+         )
+         self.kv_connector_output = kv_connector_output
++        self._am_trace_add_cpu_ms(
++            am_trace, "postprocess_cpu_ms", postprocess_cpu_start_ms
++        )
+         return None
+ 
+     @torch.inference_mode
+@@ -3900,6 +4365,7 @@ class GPUModelRunner(
+             ec_connector_output,
+             cudagraph_stats,
+             slot_mappings,
++            am_model_trace,
+         ) = self.execute_model_state
+         # Clear ephemeral state.
+         self.execute_model_state = None
+@@ -3910,8 +4376,16 @@ class GPUModelRunner(
+                 scheduler_output, grammar_output, self.input_batch, logits
+             )
+ 
++        sample_cpu_start_ms = time.monotonic() * 1000
+         with record_function_or_nullcontext("gpu_model_runner: sample"):
++            cuda_pair = self._am_trace_cuda_start(
++                am_model_trace, "sample_cuda_ms"
++            )
+             sampler_output = self._sample(logits, spec_decode_metadata)
++            self._am_trace_cuda_end(am_model_trace, cuda_pair)
++        self._am_trace_add_cpu_ms(
++            am_model_trace, "sample_call_cpu_ms", sample_cpu_start_ms
++        )
+ 
+         self._update_states_after_model_execute(
+             sampler_output.sampled_token_ids, scheduler_output
+@@ -4017,6 +4491,7 @@ class GPUModelRunner(
+             else:
+                 propose_drafts_after_bookkeeping = input_fits_in_drafter
+ 
++        bookkeeping_cpu_start_ms = time.monotonic() * 1000
+         with record_function_or_nullcontext("gpu_model_runner: bookkeep"):
+             (
+                 num_nans_in_logits,
+@@ -4034,6 +4509,9 @@ class GPUModelRunner(
+                 scheduler_output.total_num_scheduled_tokens,
+                 spec_decode_metadata,
+             )
++        self._am_trace_add_cpu_ms(
++            am_model_trace, "bookkeeping_cpu_ms", bookkeeping_cpu_start_ms
++        )
+ 
+         if propose_drafts_after_bookkeeping:
+             # ngram and other speculative decoding methods use the sampled
+@@ -4073,6 +4551,7 @@ class GPUModelRunner(
+                 else None,
+                 num_nans_in_logits=num_nans_in_logits,
+                 cudagraph_stats=cudagraph_stats,
++                am_model_trace=self._finalize_am_model_trace(am_model_trace),
+             )
+ 
+         if not self.use_async_scheduling:
+@@ -5526,6 +6005,7 @@ class GPUModelRunner(
+         self._sync_device()
+         del hidden_states, output
+         self.encoder_cache.clear()
++        self._clear_encoder_cpu_cache()
+         gc.collect()
+ 
+     def _init_minimal_kv_cache_for_profiling(self) -> None:
+diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
+index 6d117175b..55f473a2a 100644
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -716,6 +716,9 @@ class Worker(WorkerBase):
+     def reset_encoder_cache(self) -> None:
+         self.model_runner.reset_encoder_cache()
+ 
++    def start_am_encoder_restore(self, mm_hash: str) -> dict[str, Any]:
++        return self.model_runner.start_am_encoder_restore(mm_hash)
++
+     def get_model(self) -> nn.Module:
+         return self.model_runner.get_model()
+ 
+diff --git a/vllm/engine/protocol.py b/vllm/engine/protocol.py
+index de3e290af..6f022e930 100644
+--- a/vllm/engine/protocol.py
++++ b/vllm/engine/protocol.py
+@@ -80,6 +80,7 @@ class EngineClient(ABC):
+         priority: int = 0,
+         data_parallel_rank: int | None = None,
+         reasoning_ended: bool | None = None,
++        arrival_time: float | None = None,
+     ) -> AsyncGenerator[RequestOutput, None]:
+         """Generate outputs for a request."""
+         ...
+diff --git a/vllm/entrypoints/openai/chat_completion/serving.py b/vllm/entrypoints/openai/chat_completion/serving.py
+index aeab22adc..2a2f7193d 100644
+--- a/vllm/entrypoints/openai/chat_completion/serving.py
++++ b/vllm/entrypoints/openai/chat_completion/serving.py
+@@ -87,9 +87,15 @@ def _make_vllm_internal_metrics(res: RequestOutput) -> dict[str, Any] | None:
+     metrics = res.metrics
+     if metrics is None or metrics.engine_queue_to_first_token_latency <= 0.0:
+         return None
++    server_request_to_first_token_ms = metrics.first_token_latency * 1000
++    engine_queue_to_first_token_ms = (
++        metrics.engine_queue_to_first_token_latency * 1000
++    )
+     return {
+-        "engine_queue_to_first_token_ms": (
+-            metrics.engine_queue_to_first_token_latency * 1000
++        "server_request_to_first_token_ms": server_request_to_first_token_ms,
++        "engine_queue_to_first_token_ms": engine_queue_to_first_token_ms,
++        "pre_scheduler_delay_ms": (
++            server_request_to_first_token_ms - engine_queue_to_first_token_ms
+         ),
+     }
+ 
+@@ -231,6 +237,7 @@ class OpenAIServingChat(OpenAIServing):
+         for the API specification. This API mimics the OpenAI
+         Chat Completion API.
+         """
++        server_arrival_time = time.time()
+         # Streaming response
+         tokenizer = self.renderer.tokenizer
+         assert tokenizer is not None
+@@ -336,6 +343,7 @@ class OpenAIServingChat(OpenAIServing):
+                     priority=request.priority,
+                     data_parallel_rank=data_parallel_rank,
+                     reasoning_ended=reasoning_ended,
++                    arrival_time=server_arrival_time,
+                 )
+ 
+             generators.append(generator)
+diff --git a/vllm/v1/engine/async_llm.py b/vllm/v1/engine/async_llm.py
+index c3aa95dea..585b59267 100644
+--- a/vllm/v1/engine/async_llm.py
++++ b/vllm/v1/engine/async_llm.py
+@@ -542,6 +542,7 @@ class AsyncLLM(EngineClient):
+         priority: int = 0,
+         data_parallel_rank: int | None = None,
+         reasoning_ended: bool | None = None,
++        arrival_time: float | None = None,
+     ) -> AsyncGenerator[RequestOutput, None]:
+         """
+         Main function called by the API server to kick off a request
+@@ -564,6 +565,7 @@ class AsyncLLM(EngineClient):
+                 request_id,
+                 prompt,
+                 sampling_params,
++                arrival_time=arrival_time,
+                 lora_request=lora_request,
+                 tokenization_kwargs=tokenization_kwargs,
+                 trace_headers=trace_headers,

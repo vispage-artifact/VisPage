@@ -1,0 +1,3 @@
+method,sessions,queries,baseline_server_ttft_ms,method_server_ttft_ms,speedup,submitted_pages,used_pages,wasted_page_rate,source
+Random,10,1986,2459.6137648742847,2894.2077446800226,0.8498400881538012,402,302,0.24875621890547261,paper_results/evaluation/exp1_8b_server_ttft_quick/autoeval/20260611_141456/config_000_locomo_random_8013
+VISPAGE,10,1986,2459.6137648742847,1866.6759378840436,1.3176436868106638,1612,878,0.45533498759305213,paper_results/evaluation/exp1_8b_server_ttft_quick/locomo_8000/autoeval/20260611_085418/config_001_locomo_semantic_8000

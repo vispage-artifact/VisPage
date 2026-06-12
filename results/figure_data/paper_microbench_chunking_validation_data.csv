@@ -1,0 +1,5 @@
+collision,method,arrival_s,ttft_ms,engine_ttft_ms,pre_scheduler_delay_ms,bg_ttft_ms,fg_only_ttft_ms,source
+First,No priority,0.1,2816.959301630656,320.5376202240586,2496.421681406597,3902.5676250457764,205.78956604003906,paper_results/evaluation/microbench_async_chunk/microbench_server_ttft_fg1000_bg10000_gap100
+First,Chunked,0.1,2050.221045811971,130.65261611094078,1919.5684297010303,4025.790055592855,205.78956604003906,paper_results/evaluation/microbench_async_chunk/microbench_server_ttft_fg1000_bg10000_gap100
+Later,No priority,2.0,1908.368984858195,320.570011002322,1587.7989738558729,3909.336566925049,227.89104779561362,paper_results/evaluation/microbench_async_chunk/microbench_ttft_fg1000_bg10000_later_collision_gap2000
+Later,Chunked,2.0,1200.6545861562092,132.5173576672872,1068.1372284889221,4102.583885192871,227.89104779561362,paper_results/evaluation/microbench_async_chunk/microbench_ttft_fg1000_bg10000_later_collision_gap2000
